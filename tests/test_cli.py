@@ -57,3 +57,13 @@ def test_check_auth_never_prints_token(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "authentication succeeded" in result.output
     assert private_token not in result.output
+
+
+def test_stream_file_help_makes_cost_and_privacy_controls_visible() -> None:
+    result = runner.invoke(app, ["stream-file", "--help"])
+
+    assert result.exit_code == 0
+    assert "--duration-ms" in result.output
+    assert "required" in result.output.lower()
+    assert "--show-text" in result.output
+    assert "passenger audio" in result.output
