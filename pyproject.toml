@@ -9,7 +9,10 @@ description = "A reproducible RTZR Streaming STT subway announcement reliability
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "httpx>=0.28,<1",
+  "pydantic>=2.11,<3",
   "typer>=0.12,<1",
+  "websockets>=15,<17",
 ]
 
 [project.optional-dependencies]
