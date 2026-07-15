@@ -7,7 +7,7 @@ runner = CliRunner()
 
 
 def test_help_describes_project() -> None:
-    result = runner.invoke(app, ["--help"])
+    result = runner.invoke(app, ["--help"], terminal_width=160)
 
     assert result.exit_code == 0
     assert "RTZR Streaming STT" in result.stdout
@@ -60,7 +60,7 @@ def test_check_auth_never_prints_token(monkeypatch) -> None:
 
 
 def test_stream_file_help_makes_cost_and_privacy_controls_visible() -> None:
-    result = runner.invoke(app, ["stream-file", "--help"])
+    result = runner.invoke(app, ["stream-file", "--help"], terminal_width=160)
 
     assert result.exit_code == 0
     assert "--duration-ms" in result.output
@@ -83,7 +83,7 @@ def test_streaming_keyword_parser_uses_explicit_or_default_score() -> None:
 
 
 def test_batch_file_help_exposes_model_domain_and_private_output() -> None:
-    result = runner.invoke(app, ["batch-file", "--help"])
+    result = runner.invoke(app, ["batch-file", "--help"], terminal_width=160)
 
     assert result.exit_code == 0
     assert "--model" in result.output
@@ -103,7 +103,7 @@ def test_batch_output_must_stay_in_private_results(tmp_path) -> None:
 
 
 def test_prepare_review_help_exposes_fixed_chunks_and_private_output() -> None:
-    result = runner.invoke(app, ["prepare-review", "--help"])
+    result = runner.invoke(app, ["prepare-review", "--help"], terminal_width=160)
 
     assert result.exit_code == 0
     assert "model-independent" in result.output
@@ -123,7 +123,7 @@ def test_review_output_must_stay_in_private_audio(tmp_path) -> None:
 
 
 def test_evaluate_run_help_exposes_private_inputs_and_system_name() -> None:
-    result = runner.invoke(app, ["evaluate-run", "--help"])
+    result = runner.invoke(app, ["evaluate-run", "--help"], terminal_width=160)
 
     assert result.exit_code == 0
     assert "--ground-truth-file" in result.output
@@ -177,7 +177,11 @@ def test_evaluate_run_writes_only_private_aggregate(tmp_path, monkeypatch) -> No
 
 
 def test_prepare_batch_predictions_help_exposes_alignment_inputs() -> None:
-    result = runner.invoke(app, ["prepare-batch-predictions", "--help"])
+    result = runner.invoke(
+        app,
+        ["prepare-batch-predictions", "--help"],
+        terminal_width=160,
+    )
 
     assert result.exit_code == 0
     assert "--ground-truth-file" in result.output
