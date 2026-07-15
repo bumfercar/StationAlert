@@ -15,6 +15,7 @@ from nextstop_stt import __version__
 from nextstop_stt.audio.errors import AudioSourceError
 from nextstop_stt.audio.file_replay import FFmpegPCMSource
 from nextstop_stt.detection import DestinationAlertDetector
+from nextstop_stt.evaluation.review_chunks import ReviewChunkPreparer
 from nextstop_stt.rtzr.auth import RTZRCredentials, RTZRTokenProvider
 from nextstop_stt.rtzr.batch_client import (
     BatchConfig,
@@ -164,6 +165,44 @@ def _write_private_json(output_file: Path, artifact: dict) -> None:
     temporary = output_file.with_suffix(f"{output_file.suffix}.tmp")
     temporary.write_text(json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(output_file)
+
+
+@app.command("prepare-review")
+def prepare_review(
+    source_file: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=True, dir_okay=False, readable=True),
+    ],
+    output_dir: Annotated[
+        Path,
+        typer.Option(help="Empty private directory under private_audio/."),
+    ] = Path("private_audio/review"),
+    chunk_seconds: Annotated[int, typer.Option(min=1)] = 60,
+) -> None:
+    """Create fixed, model-independent chunks for human ground-truth review."""
+    try:
+        safe_output = _private_audio_dir(output_dir)
+        chunk_count, label_sheet = ReviewChunkPreparer().prepare(
+            source_file,
+            safe_output,
+            chunk_seconds=chunk_seconds,
+        )
+    except (AudioSourceError, ValueError) as error:
+        typer.echo(f"Review preparation failed: {error}", err=True)
+        raise typer.Exit(code=1) from None
+
+    typer.echo(f"Private review set created: chunks={chunk_count}")
+    typer.echo(f"Label sheet: {label_sheet.as_posix()}")
+
+
+def _private_audio_dir(output_dir: Path) -> Path:
+    private_root = Path("private_audio").resolve()
+    resolved = output_dir.resolve()
+    try:
+        resolved.relative_to(private_root)
+    except ValueError:
+        raise ValueError("output_dir must be under private_audio/") from None
+    return resolved
 
 
 @app.command("stream-file")

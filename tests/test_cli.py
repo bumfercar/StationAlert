@@ -89,3 +89,23 @@ def test_batch_output_must_stay_in_private_results(tmp_path) -> None:
         assert "results/private" in str(error)
     else:
         raise AssertionError("public Batch output path was accepted")
+
+
+def test_prepare_review_help_exposes_fixed_chunks_and_private_output() -> None:
+    result = runner.invoke(app, ["prepare-review", "--help"])
+
+    assert result.exit_code == 0
+    assert "model-independent" in result.output
+    assert "private_audio" in result.output
+    assert "--chunk-seconds" in result.output
+
+
+def test_review_output_must_stay_in_private_audio(tmp_path) -> None:
+    outside = tmp_path / "public-review"
+
+    try:
+        cli_module._private_audio_dir(outside)
+    except ValueError as error:
+        assert "private_audio" in str(error)
+    else:
+        raise AssertionError("public review output path was accepted")
