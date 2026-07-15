@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -13,6 +16,12 @@ from nextstop_stt.audio.errors import AudioSourceError
 from nextstop_stt.audio.file_replay import FFmpegPCMSource
 from nextstop_stt.detection import DestinationAlertDetector
 from nextstop_stt.rtzr.auth import RTZRCredentials, RTZRTokenProvider
+from nextstop_stt.rtzr.batch_client import (
+    BatchConfig,
+    BatchDomain,
+    BatchModel,
+    RTZRBatchClient,
+)
 from nextstop_stt.rtzr.errors import RTZRError
 from nextstop_stt.rtzr.models import StreamingConfig, StreamingDomain, StreamingModel
 from nextstop_stt.rtzr.streaming_client import RTZRStreamingClient
@@ -53,6 +62,108 @@ async def _request_authentication() -> None:
         await provider.get_access_token()
     finally:
         await provider.aclose()
+
+
+@app.command("batch-file")
+def batch_file(
+    source_file: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=True, dir_okay=False, readable=True),
+    ],
+    output_file: Annotated[
+        Path,
+        typer.Option(help="Private JSON path under results/private/."),
+    ],
+    model: Annotated[BatchModel, typer.Option()] = BatchModel.SOMMERS,
+    language: Annotated[str, typer.Option()] = "ko",
+    domain: Annotated[BatchDomain, typer.Option()] = BatchDomain.GENERAL,
+    keyword: Annotated[
+        list[str] | None,
+        typer.Option("--keyword", help="Repeat to add Batch STT keywords."),
+    ] = None,
+) -> None:
+    """Run a Batch STT baseline and save the private raw response."""
+    try:
+        safe_output = _private_result_path(output_file)
+        elapsed_seconds, utterance_count = asyncio.run(
+            _batch_file(
+                source_file=source_file,
+                output_file=safe_output,
+                model=model,
+                language=language,
+                domain=domain,
+                keywords=tuple(keyword or ()),
+            )
+        )
+    except (RTZRError, ValueError) as error:
+        typer.echo(f"Batch STT failed: {error}", err=True)
+        raise typer.Exit(code=1) from None
+
+    typer.echo(
+        f"Batch STT completed: utterances={utterance_count}, "
+        f"elapsed_seconds={elapsed_seconds:.1f}"
+    )
+    typer.echo(f"Private result saved: {safe_output.as_posix()}")
+
+
+async def _batch_file(
+    *,
+    source_file: Path,
+    output_file: Path,
+    model: BatchModel,
+    language: str,
+    domain: BatchDomain,
+    keywords: tuple[str, ...],
+) -> tuple[float, int]:
+    credentials = RTZRCredentials.from_env()
+    provider = RTZRTokenProvider(credentials)
+    client = RTZRBatchClient(provider)
+    config = BatchConfig(
+        model_name=model,
+        language=language,
+        domain=domain,
+        keywords=keywords,
+    )
+    started_at = time.monotonic()
+    try:
+        transcribe_id, response = await client.transcribe_file(source_file, config)
+    finally:
+        await client.aclose()
+        await provider.aclose()
+    elapsed_seconds = time.monotonic() - started_at
+    results = response.get("results")
+    utterances = results.get("utterances", []) if isinstance(results, dict) else []
+    utterance_count = len(utterances) if isinstance(utterances, list) else 0
+    artifact = {
+        "schema_version": 1,
+        "run": {
+            "created_at": datetime.now(UTC).isoformat(),
+            "api": "batch",
+            "config": config.to_request_dict(),
+            "elapsed_seconds": round(elapsed_seconds, 3),
+            "transcribe_id": transcribe_id,
+        },
+        "response": response,
+    }
+    _write_private_json(output_file, artifact)
+    return elapsed_seconds, utterance_count
+
+
+def _private_result_path(output_file: Path) -> Path:
+    private_root = Path("results/private").resolve()
+    resolved = output_file.resolve()
+    try:
+        resolved.relative_to(private_root)
+    except ValueError:
+        raise ValueError("output_file must be under results/private/") from None
+    return resolved
+
+
+def _write_private_json(output_file: Path, artifact: dict) -> None:
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output_file.with_suffix(f"{output_file.suffix}.tmp")
+    temporary.write_text(json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(output_file)
 
 
 @app.command("stream-file")

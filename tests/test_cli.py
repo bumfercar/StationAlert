@@ -69,3 +69,23 @@ def test_stream_file_help_makes_cost_and_privacy_controls_visible() -> None:
     assert "passenger" in result.output
     assert "audio" in result.output
     assert "--target-station" in result.output
+
+
+def test_batch_file_help_exposes_model_domain_and_private_output() -> None:
+    result = runner.invoke(app, ["batch-file", "--help"])
+
+    assert result.exit_code == 0
+    assert "--model" in result.output
+    assert "--domain" in result.output
+    assert "results/private" in result.output
+
+
+def test_batch_output_must_stay_in_private_results(tmp_path) -> None:
+    outside = tmp_path / "public-result.json"
+
+    try:
+        cli_module._private_result_path(outside)
+    except ValueError as error:
+        assert "results/private" in str(error)
+    else:
+        raise AssertionError("public Batch output path was accepted")

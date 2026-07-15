@@ -32,3 +32,7 @@ class RTZRStreamingError(RTZRError):
 
 class RTZRResponseError(RTZRStreamingError):
     """Raised when a Streaming response does not match the documented schema."""
+
+
+class RTZRBatchError(RTZRError):
+    """Raised when a Batch STT request or polling job fails."""
