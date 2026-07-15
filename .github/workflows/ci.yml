@@ -53,8 +53,11 @@ jobs:
       - name: Verify FFmpeg
         run: ffmpeg -version
 
-      - name: Run offline tests
-        run: uv run --frozen pytest
+      - name: Run FFmpeg integration tests
+        run: uv run --frozen pytest tests/audio
+
+      - name: Run offline unit tests
+        run: uv run --frozen pytest --ignore=tests/audio
 
       - name: Run Ruff
         run: uv run --frozen ruff check .
