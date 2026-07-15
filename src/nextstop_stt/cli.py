@@ -11,6 +11,7 @@ import typer
 from nextstop_stt import __version__
 from nextstop_stt.audio.errors import AudioSourceError
 from nextstop_stt.audio.file_replay import FFmpegPCMSource
+from nextstop_stt.detection import DestinationAlertDetector
 from nextstop_stt.rtzr.auth import RTZRCredentials, RTZRTokenProvider
 from nextstop_stt.rtzr.errors import RTZRError
 from nextstop_stt.rtzr.models import StreamingConfig, StreamingDomain, StreamingModel
@@ -84,6 +85,10 @@ def stream_file(
         str | None,
         typer.Option(help="Required when model=whisper."),
     ] = None,
+    target_station: Annotated[
+        str | None,
+        typer.Option(help="Selected destination, for example 어린이대공원역."),
+    ] = None,
     show_text: Annotated[
         bool,
         typer.Option(help="Print transcript text. Keep disabled for private passenger audio."),
@@ -91,7 +96,7 @@ def stream_file(
 ) -> None:
     """Replay a bounded audio segment through RTZR Streaming STT."""
     try:
-        partial_count, final_count = asyncio.run(
+        partial_count, final_count, alert_count = asyncio.run(
             _stream_file(
                 source_file=source_file,
                 duration_ms=duration_ms,
@@ -100,6 +105,7 @@ def stream_file(
                 domain=domain,
                 model=model,
                 language=language,
+                target_station=target_station,
                 show_text=show_text,
             )
         )
@@ -107,7 +113,9 @@ def stream_file(
         typer.echo(f"Streaming failed: {error}", err=True)
         raise typer.Exit(code=1) from None
 
-    typer.echo(f"Streaming completed: partial={partial_count}, final={final_count}")
+    typer.echo(
+        f"Streaming completed: partial={partial_count}, final={final_count}, alerts={alert_count}"
+    )
 
 
 async def _stream_file(
@@ -119,8 +127,9 @@ async def _stream_file(
     domain: StreamingDomain,
     model: StreamingModel,
     language: str | None,
+    target_station: str | None,
     show_text: bool,
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     credentials = RTZRCredentials.from_env()
     provider = RTZRTokenProvider(credentials)
     source = FFmpegPCMSource(
@@ -140,20 +149,27 @@ async def _stream_file(
         language=language,
     )
     client = RTZRStreamingClient(provider, config)
+    detector = DestinationAlertDetector(target_station) if target_station else None
     partial_count = 0
     final_count = 0
+    alert_count = 0
     try:
         async for response in client.transcribe(source.frames()):
             if response.final:
                 final_count += 1
             else:
                 partial_count += 1
+            if detector is not None:
+                decision = detector.evaluate(response)
+                if decision.should_alert:
+                    alert_count += 1
+                    typer.echo(f"ALERT: {decision.target_station}")
             if show_text:
                 state = "FINAL" if response.final else "PARTIAL"
                 typer.echo(f"[{state}] {response.primary_text}")
     finally:
         await provider.aclose()
-    return partial_count, final_count
+    return partial_count, final_count, alert_count
 
 
 if __name__ == "__main__":

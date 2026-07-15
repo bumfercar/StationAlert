@@ -66,4 +66,6 @@ def test_stream_file_help_makes_cost_and_privacy_controls_visible() -> None:
     assert "--duration-ms" in result.output
     assert "required" in result.output.lower()
     assert "--show-text" in result.output
-    assert "passenger audio" in result.output
+    assert "passenger" in result.output
+    assert "audio" in result.output
+    assert "--target-station" in result.output
