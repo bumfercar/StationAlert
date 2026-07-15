@@ -1,0 +1,26 @@
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+build/
+dist/
+
+# Credentials
+.env
+.env.*
+!.env.example
+
+# Private inputs and outputs
+private_audio/
+results/private/
+reports/private/
+
+# Local editor files
+.idea/
+.vscode/
