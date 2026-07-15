@@ -24,7 +24,12 @@ from nextstop_stt.rtzr.batch_client import (
     RTZRBatchClient,
 )
 from nextstop_stt.rtzr.errors import RTZRError
-from nextstop_stt.rtzr.models import StreamingConfig, StreamingDomain, StreamingModel
+from nextstop_stt.rtzr.models import (
+    KeywordBoost,
+    StreamingConfig,
+    StreamingDomain,
+    StreamingModel,
+)
 from nextstop_stt.rtzr.streaming_client import RTZRStreamingClient
 
 app = typer.Typer(
@@ -239,6 +244,17 @@ def stream_file(
         str | None,
         typer.Option(help="Selected destination, for example 어린이대공원역."),
     ] = None,
+    keyword: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--keyword",
+            help="Repeat Korean word[:score] boosts; sommers_ko only.",
+        ),
+    ] = None,
+    output_file: Annotated[
+        Path | None,
+        typer.Option(help="Optional private JSON path under results/private/."),
+    ] = None,
     show_text: Annotated[
         bool,
         typer.Option(help="Print transcript text. Keep disabled for private passenger audio."),
@@ -246,6 +262,8 @@ def stream_file(
 ) -> None:
     """Replay a bounded audio segment through RTZR Streaming STT."""
     try:
+        safe_output = _private_result_path(output_file) if output_file else None
+        keywords = _parse_keyword_boosts(tuple(keyword or ()))
         partial_count, final_count, alert_count = asyncio.run(
             _stream_file(
                 source_file=source_file,
@@ -256,6 +274,8 @@ def stream_file(
                 model=model,
                 language=language,
                 target_station=target_station,
+                keywords=keywords,
+                output_file=safe_output,
                 show_text=show_text,
             )
         )
@@ -266,6 +286,26 @@ def stream_file(
     typer.echo(
         f"Streaming completed: partial={partial_count}, final={final_count}, alerts={alert_count}"
     )
+    if safe_output is not None:
+        typer.echo(f"Private result saved: {safe_output.as_posix()}")
+
+
+def _parse_keyword_boosts(values: tuple[str, ...]) -> tuple[KeywordBoost, ...]:
+    boosts = []
+    for value in values:
+        text, separator, score_text = value.rpartition(":")
+        if separator:
+            if not text or not score_text:
+                raise ValueError("keyword must use Korean word[:score] format")
+            try:
+                score = float(score_text)
+            except ValueError:
+                raise ValueError("keyword score must be a number") from None
+        else:
+            text = value
+            score = 2.0
+        boosts.append(KeywordBoost(text=text, score=score))
+    return tuple(boosts)
 
 
 async def _stream_file(
@@ -278,6 +318,8 @@ async def _stream_file(
     model: StreamingModel,
     language: str | None,
     target_station: str | None,
+    keywords: tuple[KeywordBoost, ...],
+    output_file: Path | None,
     show_text: bool,
 ) -> tuple[int, int, int]:
     credentials = RTZRCredentials.from_env()
@@ -296,6 +338,7 @@ async def _stream_file(
         use_disfluency_filter=False,
         use_profanity_filter=False,
         use_punctuation=False,
+        keywords=keywords,
         language=language,
     )
     client = RTZRStreamingClient(provider, config)
@@ -303,14 +346,32 @@ async def _stream_file(
     partial_count = 0
     final_count = 0
     alert_count = 0
+    response_records = []
+    decision_records = []
+    session_started_at = time.monotonic()
     try:
         async for response in client.transcribe(source.frames()):
+            received_elapsed_ms = round((time.monotonic() - session_started_at) * 1_000)
+            response_records.append(
+                {
+                    "received_elapsed_ms": received_elapsed_ms,
+                    "response": response.model_dump(mode="json"),
+                }
+            )
             if response.final:
                 final_count += 1
             else:
                 partial_count += 1
             if detector is not None:
                 decision = detector.evaluate(response)
+                decision_records.append(
+                    {
+                        "transcript_seq": decision.transcript_seq,
+                        "should_alert": decision.should_alert,
+                        "reason": decision.reason.value,
+                        "target_station": decision.target_station,
+                    }
+                )
                 if decision.should_alert:
                     alert_count += 1
                     typer.echo(f"ALERT: {decision.target_station}")
@@ -319,6 +380,27 @@ async def _stream_file(
                 typer.echo(f"[{state}] {response.primary_text}")
     finally:
         await provider.aclose()
+    if output_file is not None:
+        _write_private_json(
+            output_file,
+            {
+                "schema_version": 1,
+                "run": {
+                    "created_at": datetime.now(UTC).isoformat(),
+                    "api": "streaming",
+                    "config": config.to_query_params(),
+                    "segment": {
+                        "start_ms": start_ms,
+                        "duration_ms": duration_ms,
+                    },
+                    "session_elapsed_ms": round(
+                        (time.monotonic() - session_started_at) * 1_000
+                    ),
+                },
+                "responses": response_records,
+                "decisions": decision_records,
+            },
+        )
     return partial_count, final_count, alert_count
 
 

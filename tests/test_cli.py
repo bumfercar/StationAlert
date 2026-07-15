@@ -69,6 +69,17 @@ def test_stream_file_help_makes_cost_and_privacy_controls_visible() -> None:
     assert "passenger" in result.output
     assert "audio" in result.output
     assert "--target-station" in result.output
+    assert "--keyword" in result.output
+    assert "--output-file" in result.output
+
+
+def test_streaming_keyword_parser_uses_explicit_or_default_score() -> None:
+    boosts = cli_module._parse_keyword_boosts(("먹골역:2.5", "상봉역"))
+
+    assert [(boost.text, boost.score) for boost in boosts] == [
+        ("먹골역", 2.5),
+        ("상봉역", 2.0),
+    ]
 
 
 def test_batch_file_help_exposes_model_domain_and_private_output() -> None:
