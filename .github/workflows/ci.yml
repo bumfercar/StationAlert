@@ -62,8 +62,11 @@ jobs:
       - name: Run RTZR unit tests
         run: uv run --frozen pytest tests/rtzr
 
-      - name: Run CLI and domain unit tests
-        run: uv run --frozen pytest tests/test_cli.py tests/test_detection.py
+      - name: Run CLI unit tests
+        run: uv run --frozen pytest tests/test_cli.py
+
+      - name: Run domain unit tests
+        run: uv run --frozen pytest tests/test_detection.py
 
       - name: Run Ruff
         run: uv run --frozen ruff check .
