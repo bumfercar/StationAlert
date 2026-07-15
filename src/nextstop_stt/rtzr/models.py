@@ -123,7 +123,7 @@ class StreamingAlternative(BaseModel):
 
 
 class StreamingTranscript(BaseModel):
-    """Documented RTZR partial or final Streaming response."""
+    """RTZR partial or final response, preserving observed timing values."""
 
     model_config = ConfigDict(frozen=True, extra="allow")
 
@@ -132,12 +132,6 @@ class StreamingTranscript(BaseModel):
     duration: int = Field(ge=0)
     final: bool
     alternatives: tuple[StreamingAlternative, ...] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def validate_partial_duration(self) -> StreamingTranscript:
-        if not self.final and self.duration != 0:
-            raise ValueError("partial Streaming responses must have duration=0")
-        return self
 
     @property
     def primary_text(self) -> str:

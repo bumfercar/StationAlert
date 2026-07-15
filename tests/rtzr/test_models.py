@@ -96,14 +96,15 @@ def test_partial_and_final_streaming_responses_are_typed() -> None:
     assert final.alternatives[0].words[0].start_at == 850
 
 
-def test_partial_response_rejects_nonzero_duration() -> None:
-    with pytest.raises(ValidationError, match="duration=0"):
-        StreamingTranscript.model_validate(
-            {
-                "seq": 1,
-                "start_at": 0,
-                "duration": 100,
-                "final": False,
-                "alternatives": [{"text": "노원", "confidence": 0.5}],
-            }
-        )
+def test_partial_response_preserves_observed_nonzero_duration() -> None:
+    partial = StreamingTranscript.model_validate(
+        {
+            "seq": 1,
+            "start_at": 0,
+            "duration": 100,
+            "final": False,
+            "alternatives": [{"text": "노원", "confidence": 0.5}],
+        }
+    )
+
+    assert partial.duration == 100

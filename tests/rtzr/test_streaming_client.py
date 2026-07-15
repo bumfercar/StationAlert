@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -117,6 +118,26 @@ def test_invalid_response_does_not_echo_private_transcript() -> None:
     with pytest.raises(RTZRResponseError) as captured:
         parse_streaming_message(f'{{"unexpected": "{private_text}"}}')
 
+    assert private_text not in str(captured.value)
+
+
+def test_parse_error_reports_only_schema_location_and_type() -> None:
+    private_text = "private passenger speech"
+
+    with pytest.raises(RTZRResponseError) as captured:
+        parse_streaming_message(
+            json.dumps(
+                {
+                    "seq": 1,
+                    "start_at": 0,
+                    "duration": 0,
+                    "final": False,
+                    "alternatives": [{"text": private_text}],
+                }
+            )
+        )
+
+    assert "alternatives.0.confidence:missing" in str(captured.value)
     assert private_text not in str(captured.value)
 
 

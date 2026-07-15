@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from typing import Any, Protocol
 from urllib.parse import urlencode
@@ -111,6 +112,13 @@ def parse_streaming_message(message: str | bytes) -> StreamingTranscript:
     try:
         if isinstance(message, bytes):
             message = message.decode("utf-8")
-        return StreamingTranscript.model_validate_json(message)
-    except (UnicodeDecodeError, ValidationError, ValueError):
-        raise RTZRResponseError("Invalid RTZR Streaming response") from None
+        payload = json.loads(message)
+        return StreamingTranscript.model_validate(payload)
+    except ValidationError as error:
+        issues = ", ".join(
+            f"{'.'.join(str(part) for part in issue['loc'])}:{issue['type']}"
+            for issue in error.errors(include_input=False, include_url=False)
+        )
+        raise RTZRResponseError(f"Invalid RTZR Streaming response schema ({issues})") from None
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        raise RTZRResponseError("Invalid RTZR Streaming response JSON") from None
