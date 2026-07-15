@@ -1,16 +1,24 @@
+import re
+
 from typer.testing import CliRunner
 
 import nextstop_stt.cli as cli_module
 from nextstop_stt.cli import app
 
 runner = CliRunner()
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _unstyle(text: str) -> str:
+    return _ANSI_ESCAPE.sub("", text)
 
 
 def test_help_describes_project() -> None:
     result = runner.invoke(app, ["--help"], terminal_width=160)
+    output = _unstyle(result.output)
 
     assert result.exit_code == 0
-    assert "RTZR Streaming STT" in result.stdout
+    assert "RTZR Streaming STT" in output
 
 
 def test_version_is_available() -> None:
@@ -61,16 +69,17 @@ def test_check_auth_never_prints_token(monkeypatch) -> None:
 
 def test_stream_file_help_makes_cost_and_privacy_controls_visible() -> None:
     result = runner.invoke(app, ["stream-file", "--help"], terminal_width=160)
+    output = _unstyle(result.output)
 
     assert result.exit_code == 0
-    assert "--duration-ms" in result.output
-    assert "required" in result.output.lower()
-    assert "--show-text" in result.output
-    assert "passenger" in result.output
-    assert "audio" in result.output
-    assert "--target-station" in result.output
-    assert "--keyword" in result.output
-    assert "--output-file" in result.output
+    assert "--duration-ms" in output
+    assert "required" in output.lower()
+    assert "--show-text" in output
+    assert "passenger" in output
+    assert "audio" in output
+    assert "--target-station" in output
+    assert "--keyword" in output
+    assert "--output-file" in output
 
 
 def test_streaming_keyword_parser_uses_explicit_or_default_score() -> None:
@@ -84,11 +93,12 @@ def test_streaming_keyword_parser_uses_explicit_or_default_score() -> None:
 
 def test_batch_file_help_exposes_model_domain_and_private_output() -> None:
     result = runner.invoke(app, ["batch-file", "--help"], terminal_width=160)
+    output = _unstyle(result.output)
 
     assert result.exit_code == 0
-    assert "--model" in result.output
-    assert "--domain" in result.output
-    assert "results/private" in result.output
+    assert "--model" in output
+    assert "--domain" in output
+    assert "results/private" in output
 
 
 def test_batch_output_must_stay_in_private_results(tmp_path) -> None:
@@ -104,11 +114,12 @@ def test_batch_output_must_stay_in_private_results(tmp_path) -> None:
 
 def test_prepare_review_help_exposes_fixed_chunks_and_private_output() -> None:
     result = runner.invoke(app, ["prepare-review", "--help"], terminal_width=160)
+    output = _unstyle(result.output)
 
     assert result.exit_code == 0
-    assert "model-independent" in result.output
-    assert "private_audio" in result.output
-    assert "--chunk-seconds" in result.output
+    assert "model-independent" in output
+    assert "private_audio" in output
+    assert "--chunk-seconds" in output
 
 
 def test_review_output_must_stay_in_private_audio(tmp_path) -> None:
@@ -124,12 +135,13 @@ def test_review_output_must_stay_in_private_audio(tmp_path) -> None:
 
 def test_evaluate_run_help_exposes_private_inputs_and_system_name() -> None:
     result = runner.invoke(app, ["evaluate-run", "--help"], terminal_width=160)
+    output = _unstyle(result.output)
 
     assert result.exit_code == 0
-    assert "--ground-truth-file" in result.output
-    assert "--predictions-file" in result.output
-    assert "--system-name" in result.output
-    assert "private" in result.output.lower()
+    assert "--ground-truth-file" in output
+    assert "--predictions-file" in output
+    assert "--system-name" in output
+    assert "private" in output.lower()
 
 
 def test_evaluate_run_writes_only_private_aggregate(tmp_path, monkeypatch) -> None:
@@ -182,9 +194,10 @@ def test_prepare_batch_predictions_help_exposes_alignment_inputs() -> None:
         ["prepare-batch-predictions", "--help"],
         terminal_width=160,
     )
+    output = _unstyle(result.output)
 
     assert result.exit_code == 0
-    assert "--ground-truth-file" in result.output
-    assert "--batch-result-file" in result.output
-    assert "--target-station" in result.output
-    assert "results/private" in result.output
+    assert "--ground-truth-file" in output
+    assert "--batch-result-file" in output
+    assert "--target-station" in output
+    assert "results/private" in output

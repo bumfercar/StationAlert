@@ -62,23 +62,8 @@ jobs:
       - name: Run RTZR unit tests
         run: uv run --frozen pytest tests/rtzr
 
-      - name: Check root CLI help
-        run: uv run --frozen pytest tests/test_cli.py::test_help_describes_project
-
-      - name: Check Streaming CLI help
-        run: uv run --frozen pytest tests/test_cli.py::test_stream_file_help_makes_cost_and_privacy_controls_visible
-
-      - name: Check Batch CLI help
-        run: uv run --frozen pytest tests/test_cli.py::test_batch_file_help_exposes_model_domain_and_private_output
-
-      - name: Check review CLI help
-        run: uv run --frozen pytest tests/test_cli.py::test_prepare_review_help_exposes_fixed_chunks_and_private_output
-
-      - name: Check evaluation CLI help
-        run: uv run --frozen pytest tests/test_cli.py::test_evaluate_run_help_exposes_private_inputs_and_system_name
-
-      - name: Check Batch alignment CLI help
-        run: uv run --frozen pytest tests/test_cli.py::test_prepare_batch_predictions_help_exposes_alignment_inputs
+      - name: Run CLI help contract tests
+        run: uv run --frozen pytest tests/test_cli.py -k help
 
       - name: Run CLI behavior tests
         run: uv run --frozen pytest tests/test_cli.py -k "not help"
