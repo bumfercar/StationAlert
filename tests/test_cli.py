@@ -120,3 +120,67 @@ def test_review_output_must_stay_in_private_audio(tmp_path) -> None:
         assert "private_audio" in str(error)
     else:
         raise AssertionError("public review output path was accepted")
+
+
+def test_evaluate_run_help_exposes_private_inputs_and_system_name() -> None:
+    result = runner.invoke(app, ["evaluate-run", "--help"])
+
+    assert result.exit_code == 0
+    assert "--ground-truth-file" in result.output
+    assert "--predictions-file" in result.output
+    assert "--system-name" in result.output
+    assert "private" in result.output.lower()
+
+
+def test_evaluate_run_writes_only_private_aggregate(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    private_audio = tmp_path / "private_audio"
+    private_results = tmp_path / "results" / "private"
+    private_audio.mkdir()
+    private_results.mkdir(parents=True)
+    ground_truth = private_audio / "ground-truth.csv"
+    predictions = private_results / "predictions.csv"
+    output = private_results / "metrics.json"
+    ground_truth.write_text(
+        "segment_id,start_ms,end_ms,station,announcement_type,reference_text,"
+        "expected_alert,overlapping_speech,noise_level,notes\n"
+        "segment-001,1000,2000,먹골,NEXT_STATION,먹골역,true,false,medium,\n",
+        encoding="utf-8",
+    )
+    predictions.write_text(
+        "segment_id,hypothesis_text,predicted_alert,status\n"
+        "segment-001,먹골역,true,completed\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "evaluate-run",
+            "--ground-truth-file",
+            str(ground_truth),
+            "--predictions-file",
+            str(predictions),
+            "--output-file",
+            str(output),
+            "--system-name",
+            "test-system",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "CER=0.0000" in result.output
+    assert "F1=1.0000" in result.output
+    artifact = output.read_text(encoding="utf-8")
+    assert "test-system" in artifact
+    assert "먹골역" not in artifact
+
+
+def test_prepare_batch_predictions_help_exposes_alignment_inputs() -> None:
+    result = runner.invoke(app, ["prepare-batch-predictions", "--help"])
+
+    assert result.exit_code == 0
+    assert "--ground-truth-file" in result.output
+    assert "--batch-result-file" in result.output
+    assert "--target-station" in result.output
+    assert "results/private" in result.output

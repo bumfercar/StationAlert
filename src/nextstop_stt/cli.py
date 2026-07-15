@@ -15,7 +15,18 @@ from nextstop_stt import __version__
 from nextstop_stt.audio.errors import AudioSourceError
 from nextstop_stt.audio.file_replay import FFmpegPCMSource
 from nextstop_stt.detection import DestinationAlertDetector
+from nextstop_stt.evaluation.batch_predictions import (
+    build_batch_predictions,
+    load_batch_artifact,
+    write_predictions,
+)
 from nextstop_stt.evaluation.review_chunks import ReviewChunkPreparer
+from nextstop_stt.evaluation.run_evaluation import (
+    EvaluationDataError,
+    evaluate_run,
+    load_ground_truth,
+    load_predictions,
+)
 from nextstop_stt.rtzr.auth import RTZRCredentials, RTZRTokenProvider
 from nextstop_stt.rtzr.batch_client import (
     BatchConfig,
@@ -208,6 +219,109 @@ def _private_audio_dir(output_dir: Path) -> Path:
     except ValueError:
         raise ValueError("output_dir must be under private_audio/") from None
     return resolved
+
+
+@app.command("evaluate-run")
+def evaluate_saved_run(
+    ground_truth_file: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=True, dir_okay=False, readable=True),
+    ],
+    predictions_file: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=True, dir_okay=False, readable=True),
+    ],
+    output_file: Annotated[
+        Path,
+        typer.Option(help="Private aggregate JSON path under results/private/."),
+    ],
+    system_name: Annotated[
+        str,
+        typer.Option(help="Stable experiment name, for example rtzr-sommers-general."),
+    ],
+) -> None:
+    """Evaluate one aligned STT run without printing private transcript text."""
+    try:
+        safe_ground_truth = _private_audio_file(ground_truth_file)
+        safe_predictions = _private_result_path(predictions_file)
+        safe_output = _private_result_path(output_file)
+        if not system_name.strip():
+            raise EvaluationDataError("system_name must not be empty")
+        result = evaluate_run(
+            load_ground_truth(safe_ground_truth),
+            load_predictions(safe_predictions),
+        )
+        _write_private_json(
+            safe_output,
+            {
+                "schema_version": 1,
+                "run": {
+                    "created_at": datetime.now(UTC).isoformat(),
+                    "system_name": system_name.strip(),
+                },
+                "result": result,
+            },
+        )
+    except (EvaluationDataError, ValueError) as error:
+        typer.echo(f"Evaluation failed: {error}", err=True)
+        raise typer.Exit(code=1) from None
+
+    typer.echo(
+        "Evaluation completed: "
+        f"samples={result['sample_count']}, "
+        f"CER={_metric_text(result['transcription']['cer'])}, "
+        f"F1={_metric_text(result['decision']['f1'])}"
+    )
+    typer.echo(f"Private result saved: {safe_output.as_posix()}")
+
+
+def _private_audio_file(input_file: Path) -> Path:
+    private_root = Path("private_audio").resolve()
+    resolved = input_file.resolve()
+    try:
+        resolved.relative_to(private_root)
+    except ValueError:
+        raise ValueError("ground_truth_file must be under private_audio/") from None
+    return resolved
+
+
+def _metric_text(value: float | None) -> str:
+    return "undefined" if value is None else f"{value:.4f}"
+
+
+@app.command("prepare-batch-predictions")
+def prepare_batch_predictions(
+    ground_truth_file: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=True, dir_okay=False, readable=True),
+    ],
+    batch_result_file: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=True, dir_okay=False, readable=True),
+    ],
+    output_file: Annotated[
+        Path,
+        typer.Option(help="Private prediction CSV path under results/private/."),
+    ],
+    target_station: Annotated[str, typer.Option(help="Destination used by the alert baseline.")],
+) -> None:
+    """Align a saved RTZR Batch run to reviewed ground-truth segments."""
+    try:
+        safe_ground_truth = _private_audio_file(ground_truth_file)
+        safe_batch_result = _private_result_path(batch_result_file)
+        safe_output = _private_result_path(output_file)
+        predictions = build_batch_predictions(
+            load_ground_truth(safe_ground_truth),
+            load_batch_artifact(safe_batch_result),
+            target_station=target_station,
+        )
+        write_predictions(safe_output, predictions)
+    except (EvaluationDataError, ValueError) as error:
+        typer.echo(f"Prediction preparation failed: {error}", err=True)
+        raise typer.Exit(code=1) from None
+
+    typer.echo(f"Private Batch predictions created: samples={len(predictions)}")
+    typer.echo(f"Prediction file: {safe_output.as_posix()}")
 
 
 @app.command("stream-file")
