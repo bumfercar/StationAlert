@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from nextstop_stt.audio.errors import AudioSourceError
-from nextstop_stt.audio.file_replay import FFmpegPCMSource
+from nextstop_stt.audio.file_replay import FFmpegPCMSource, probe_audio_duration_ms
 
 
 def test_source_rejects_missing_file_without_exposing_path(tmp_path: Path) -> None:
@@ -37,6 +37,26 @@ def test_command_requests_headerless_mono_linear16(tmp_path: Path) -> None:
     assert command[command.index("-ar") : command.index("-ar") + 2] == ("-ar", "16000")
     assert command[command.index("-ss") : command.index("-ss") + 2] == ("-ss", "1.500")
     assert command[command.index("-t") : command.index("-t") + 2] == ("-t", "2.000")
+
+
+def test_probe_audio_duration_returns_milliseconds_without_shell(tmp_path: Path) -> None:
+    audio_path = _write_silence(tmp_path / "sample.wav")
+    captured = {}
+
+    def runner(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return type("Completed", (), {"returncode": 0, "stdout": "1.234\n"})()
+
+    duration_ms = probe_audio_duration_ms(
+        audio_path,
+        tool_finder=lambda name: name,
+        runner=runner,
+    )
+
+    assert duration_ms == 1_234
+    assert captured["command"][0] == "ffprobe"
+    assert captured["kwargs"]["check"] is False
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="FFmpeg is not installed")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import subprocess
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
@@ -14,6 +15,44 @@ PCM_SAMPLE_WIDTH_BYTES = 2
 MIN_SAMPLE_RATE = 8_000
 MAX_SAMPLE_RATE = 48_000
 DEFAULT_CHUNK_DURATION_MS = 100
+
+
+def probe_audio_duration_ms(
+    input_path: Path,
+    *,
+    tool_finder: Callable[[str], str | None] = shutil.which,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> int:
+    """Return media duration without exposing the private path in errors."""
+    if not input_path.is_file():
+        raise AudioSourceError("Audio input file was not found")
+    ffprobe = tool_finder("ffprobe")
+    if ffprobe is None:
+        raise AudioSourceError("FFprobe is required but was not found")
+    completed = runner(
+        (
+            ffprobe,
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(input_path),
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise AudioSourceError("FFprobe could not inspect the audio")
+    try:
+        duration_ms = round(float(completed.stdout.strip()) * 1_000)
+    except ValueError:
+        raise AudioSourceError("FFprobe returned an invalid audio duration") from None
+    if duration_ms <= 0:
+        raise AudioSourceError("Audio duration must be positive")
+    return duration_ms
 
 
 class FFmpegPCMSource:

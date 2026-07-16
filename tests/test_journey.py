@@ -1,6 +1,6 @@
 import pytest
 
-from nextstop_stt.journey import JourneyStatus, JourneyTracker
+from nextstop_stt.journey import JourneyStatus, JourneyTracker, TravelDirection
 
 
 def test_journey_reports_remaining_prepare_and_arrival() -> None:
@@ -12,8 +12,10 @@ def test_journey_reports_remaining_prepare_and_arrival() -> None:
 
     assert en_route.status is JourneyStatus.EN_ROUTE
     assert en_route.stations_remaining == 2
+    assert en_route.direction is TravelDirection.UNKNOWN
     assert prepare.status is JourneyStatus.PREPARE_TO_EXIT
     assert prepare.stations_remaining == 1
+    assert prepare.direction is TravelDirection.TOWARD_CHILDRENS_GRAND_PARK
     assert arrived.status is JourneyStatus.ARRIVED
     assert arrived.stations_remaining == 0
 
@@ -21,19 +23,31 @@ def test_journey_reports_remaining_prepare_and_arrival() -> None:
 def test_journey_ignores_duplicate_and_backward_station() -> None:
     tracker = JourneyTracker("어린이대공원")
     tracker.observe("중곡")
+    tracker.observe("군자")
 
-    assert tracker.observe("중곡").status is JourneyStatus.DUPLICATE
+    assert tracker.observe("군자").status is JourneyStatus.DUPLICATE
     assert tracker.observe("용마산").status is JourneyStatus.OUT_OF_ORDER
-    assert tracker.observe("군자").status is JourneyStatus.PREPARE_TO_EXIT
 
 
 def test_journey_reports_passed_destination() -> None:
     tracker = JourneyTracker("중곡")
+    tracker.observe("용마산")
 
     update = tracker.observe("군자")
 
     assert update.status is JourneyStatus.PASSED_DESTINATION
     assert update.stations_remaining == -1
+
+
+def test_journey_infers_reverse_direction() -> None:
+    tracker = JourneyTracker("먹골")
+    tracker.observe("면목")
+
+    update = tracker.observe("상봉")
+
+    assert update.direction is TravelDirection.TOWARD_NOWON
+    assert update.status is JourneyStatus.EN_ROUTE
+    assert update.stations_remaining == 2
 
 
 def test_journey_rejects_unsupported_destination() -> None:

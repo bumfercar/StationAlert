@@ -22,6 +22,14 @@ class JourneyStatus(StrEnum):
     OUT_OF_ORDER = "out_of_order_station"
 
 
+class TravelDirection(StrEnum):
+    """Direction inferred from two ordered station observations."""
+
+    UNKNOWN = "unknown"
+    TOWARD_CHILDRENS_GRAND_PARK = "toward_childrens_grand_park"
+    TOWARD_NOWON = "toward_nowon"
+
+
 @dataclass(frozen=True)
 class JourneyUpdate:
     """Current position relative to the selected destination."""
@@ -30,10 +38,11 @@ class JourneyUpdate:
     destination: str
     stations_remaining: int
     status: JourneyStatus
+    direction: TravelDirection
 
 
 class JourneyTracker:
-    """Track forward travel from Nowon to Children's Grand Park."""
+    """Infer travel direction and track position within the recorded corridor."""
 
     def __init__(self, destination: str) -> None:
         canonical = canonical_station_name(destination).removesuffix("역")
@@ -43,20 +52,41 @@ class JourneyTracker:
         self.destination = canonical
         self._destination_index = LINE_7_DEMO_ROUTE.index(canonical)
         self._current_index: int | None = None
+        self._direction = TravelDirection.UNKNOWN
 
     def observe(self, station: str) -> JourneyUpdate:
-        """Apply one strong station extraction without accepting backward jumps."""
+        """Apply one strong station extraction and reject direction reversals."""
         if station not in LINE_7_DEMO_ROUTE:
             raise ValueError("observed station is outside the demo route")
         station_index = LINE_7_DEMO_ROUTE.index(station)
-        remaining = self._destination_index - station_index
-
         if self._current_index == station_index:
-            return self._update(station, remaining, JourneyStatus.DUPLICATE)
-        if self._current_index is not None and station_index < self._current_index:
-            return self._update(station, remaining, JourneyStatus.OUT_OF_ORDER)
+            return self._update(
+                station,
+                self._remaining(station_index),
+                JourneyStatus.DUPLICATE,
+            )
+        if self._current_index is None:
+            self._current_index = station_index
+            remaining = abs(self._destination_index - station_index)
+            status = JourneyStatus.ARRIVED if remaining == 0 else JourneyStatus.EN_ROUTE
+            return self._update(station, remaining, status)
+
+        observed_direction = (
+            TravelDirection.TOWARD_CHILDRENS_GRAND_PARK
+            if station_index > self._current_index
+            else TravelDirection.TOWARD_NOWON
+        )
+        if self._direction is TravelDirection.UNKNOWN:
+            self._direction = observed_direction
+        elif observed_direction is not self._direction:
+            return self._update(
+                station,
+                self._remaining(station_index),
+                JourneyStatus.OUT_OF_ORDER,
+            )
 
         self._current_index = station_index
+        remaining = self._remaining(station_index)
         if remaining == 1:
             status = JourneyStatus.PREPARE_TO_EXIT
         elif remaining == 0:
@@ -66,6 +96,11 @@ class JourneyTracker:
         else:
             status = JourneyStatus.EN_ROUTE
         return self._update(station, remaining, status)
+
+    def _remaining(self, station_index: int) -> int:
+        if self._direction is TravelDirection.TOWARD_NOWON:
+            return station_index - self._destination_index
+        return self._destination_index - station_index
 
     def _update(
         self,
@@ -78,4 +113,5 @@ class JourneyTracker:
             destination=self.destination,
             stations_remaining=remaining,
             status=status,
+            direction=self._direction,
         )

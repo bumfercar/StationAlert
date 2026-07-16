@@ -13,7 +13,7 @@ import typer
 
 from nextstop_stt import __version__
 from nextstop_stt.audio.errors import AudioSourceError
-from nextstop_stt.audio.file_replay import FFmpegPCMSource
+from nextstop_stt.audio.file_replay import FFmpegPCMSource, probe_audio_duration_ms
 from nextstop_stt.detection import DestinationAlertDetector
 from nextstop_stt.evaluation.batch_predictions import (
     build_batch_predictions,
@@ -27,7 +27,12 @@ from nextstop_stt.evaluation.run_evaluation import (
     load_ground_truth,
     load_predictions,
 )
-from nextstop_stt.journey import JourneyStatus, JourneyTracker, JourneyUpdate
+from nextstop_stt.journey import (
+    JourneyStatus,
+    JourneyTracker,
+    JourneyUpdate,
+    TravelDirection,
+)
 from nextstop_stt.rtzr.auth import RTZRCredentials, RTZRTokenProvider
 from nextstop_stt.rtzr.batch_client import (
     BatchConfig,
@@ -481,7 +486,7 @@ def journey_demo(
     ] = 0.0,
     duration_seconds: Annotated[
         float | None,
-        typer.Option(min=0.1, help="Required replay duration; prompted when omitted."),
+        typer.Option(min=0.1, help="Optional debug limit; the full file is replayed by default."),
     ] = None,
     domain: Annotated[StreamingDomain, typer.Option()] = StreamingDomain.MEETING,
     keyword_score: Annotated[
@@ -514,16 +519,18 @@ def journey_demo(
     try:
         tracker = JourneyTracker(destination)
         safe_output = _private_result_path(output_file)
-        if duration_seconds is None:
-            duration_seconds = typer.prompt(
-                "실시간으로 재생할 길이(초)를 입력해주세요",
-                default=20.0,
-                type=float,
-            )
-        if duration_seconds <= 0:
-            raise ValueError("duration must be positive")
+        total_duration_ms = probe_audio_duration_ms(source_file)
+        start_ms = round(start_seconds * 1_000)
+        if start_ms >= total_duration_ms:
+            raise ValueError("start_seconds must be before the end of the audio")
+        available_ms = total_duration_ms - start_ms
+        duration_ms = (
+            available_ms
+            if duration_seconds is None
+            else min(round(duration_seconds * 1_000), available_ms)
+        )
         keywords = _merge_line7_keyword_boosts((), score=keyword_score)
-    except ValueError as error:
+    except (AudioSourceError, ValueError) as error:
         typer.echo(f"실행 실패: {error}", err=True)
         raise typer.Exit(code=1) from None
 
@@ -534,8 +541,11 @@ def journey_demo(
         f"Line7 keyword score={keyword_score:.1f}"
     )
     typer.echo(
-        f"[재생 구간] {start_seconds:.3f}초부터 {duration_seconds:.3f}초 | "
-        "실제 시간만큼 소요"
+        f"[원본 길이] {_clock_text(total_duration_ms)}"
+    )
+    typer.echo(
+        f"[재생 구간] {_clock_text(start_ms)}부터 {_clock_text(start_ms + duration_ms)} | "
+        f"총 {_clock_text(duration_ms)} 실시간 재생"
     )
     if not yes and not typer.confirm("RTZR Streaming 인식을 시작할까요?"):
         typer.echo("사용자가 실행을 취소했습니다.")
@@ -546,8 +556,8 @@ def journey_demo(
         partial, final, _, stations, candidates = asyncio.run(
             _stream_file(
                 source_file=source_file,
-                duration_ms=round(duration_seconds * 1_000),
-                start_ms=round(start_seconds * 1_000),
+                duration_ms=duration_ms,
+                start_ms=start_ms,
                 sample_rate=16_000,
                 domain=domain,
                 model=StreamingModel.SOMMERS_KO,
@@ -619,6 +629,15 @@ async def _stream_file(
     station_records = []
     journey_records = []
     session_started_at = time.monotonic()
+    progress_task = None
+    if journey_tracker is not None:
+        progress_task = asyncio.create_task(
+            _render_replay_progress(
+                duration_ms=duration_ms,
+                start_ms=start_ms,
+                started_at=session_started_at,
+            )
+        )
     try:
         async for response in client.transcribe(source.frames()):
             received_elapsed_ms = round((time.monotonic() - session_started_at) * 1_000)
@@ -657,6 +676,7 @@ async def _stream_file(
                                     "destination": update.destination,
                                     "stations_remaining": update.stations_remaining,
                                     "status": update.status.value,
+                                    "direction": update.direction.value,
                                 }
                             )
                         station_count += 1
@@ -689,6 +709,9 @@ async def _stream_file(
                 state = "FINAL" if response.final else "PARTIAL"
                 typer.echo(f"[{state}] {response.primary_text}")
     finally:
+        if progress_task is not None:
+            progress_task.cancel()
+            await asyncio.gather(progress_task, return_exceptions=True)
         await provider.aclose()
     if output_file is not None:
         _write_private_json(
@@ -718,14 +741,21 @@ async def _stream_file(
 
 def _render_journey_update(update: JourneyUpdate, *, seq: int) -> None:
     if update.status is JourneyStatus.EN_ROUTE:
+        direction = _direction_text(update.direction)
         typer.echo(
-            f"[현재역] {update.station} | 목적지 {update.destination}까지 "
-            f"{update.stations_remaining}정거장 | final seq={seq}"
+            f"[현재역] {update.station}역 | 이동 방향: {direction} | final seq={seq}"
+        )
+        typer.echo(
+            f"[이동 안내] 목적지 {update.destination}까지 "
+            f"{update.stations_remaining}정거장"
         )
     elif update.status is JourneyStatus.PREPARE_TO_EXIT:
         typer.echo(
-            f"[하차 준비] 현재 {update.station} | 다음 역 {update.destination}에서 "
-            f"내리세요 | final seq={seq}"
+            f"[현재역] {update.station}역 | 이동 방향: "
+            f"{_direction_text(update.direction)} | final seq={seq}"
+        )
+        typer.echo(
+            f"[하차 준비] 다음 역 {update.destination}에서 내리세요"
         )
     elif update.status is JourneyStatus.ARRIVED:
         typer.echo(f"[도착] {update.destination}역입니다. 하차하세요 | final seq={seq}")
@@ -739,6 +769,38 @@ def _render_journey_update(update: JourneyUpdate, *, seq: int) -> None:
             f"[보류] {update.station}역은 진행 순서와 맞지 않아 위치를 갱신하지 않습니다 "
             f"| final seq={seq}"
         )
+
+
+def _direction_text(direction: TravelDirection) -> str:
+    if direction is TravelDirection.TOWARD_CHILDRENS_GRAND_PARK:
+        return "어린이대공원 방향"
+    if direction is TravelDirection.TOWARD_NOWON:
+        return "노원 방향"
+    return "판별 중(다음 역 인식 대기)"
+
+
+async def _render_replay_progress(
+    *,
+    duration_ms: int,
+    start_ms: int,
+    started_at: float,
+) -> None:
+    while True:
+        elapsed_ms = min(round((time.monotonic() - started_at) * 1_000), duration_ms)
+        typer.echo(
+            f"[재생] {_clock_text(elapsed_ms)} / {_clock_text(duration_ms)} "
+            f"| 원본 {_clock_text(start_ms + elapsed_ms)} | RTZR 인식 중"
+        )
+        await asyncio.sleep(10)
+
+
+def _clock_text(milliseconds: int) -> str:
+    total_seconds = max(0, milliseconds // 1_000)
+    hours, remainder = divmod(total_seconds, 3_600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
 
 
 if __name__ == "__main__":

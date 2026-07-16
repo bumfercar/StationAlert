@@ -65,11 +65,21 @@ CLI는 다음 순서로 질문합니다.
 NextStop STT | 지하철 현재역 인식 및 하차 안내
 녹음 파일 경로를 입력해주세요:
 하차하실 역명을 정확히 입력해주세요:
-실시간으로 재생할 길이(초)를 입력해주세요 [20.0]:
 RTZR Streaming 인식을 시작할까요? [y/N]:
 ```
 
-현재 비공개 녹음의 어린이대공원 20초를 바로 확인하려면 다음처럼 인자를 전달합니다.
+파일 길이는 FFprobe로 자동 확인하며 기본적으로 녹음 전체를 실시간 속도로 재생합니다.
+`--start-seconds`와 `--duration-seconds`는 특정 실패 구간을 빠르게 다시 확인할 때만 쓰는
+고급 option입니다.
+
+현재 비공개 녹음을 처음부터 끝까지 실제 여행처럼 실행하려면 다음처럼 인자를 전달합니다.
+
+```bash
+./scripts/run_demo.sh --source-file ../subwayaudio.m4a --destination 어린이대공원 --yes
+```
+
+원본이 19분 39초이므로 실제 실행도 같은 시간이 걸립니다. 목적지역 부근 UI만 20초 동안
+빠르게 확인하려면 고급 구간 option을 사용합니다.
 
 ```bash
 ./scripts/run_demo.sh --source-file ../subwayaudio.m4a --destination 어린이대공원 --start-seconds 1124 --duration-seconds 20 --yes
@@ -81,6 +91,7 @@ Windows에서도 같은 option을 `run_demo.ps1` 뒤에 붙이면 됩니다.
 
 ```text
 [연결] RTZR Streaming STT 연결 및 실시간 재생 시작
+[재생] 00:00 / 00:20 | 원본 18:44 | RTZR 인식 중
 [인식] final seq=1 | 역명 근거 없음
 [도착] 어린이대공원역입니다. 하차하세요 | final seq=2
 [인식] final seq=3 | 역명 후보 보류
