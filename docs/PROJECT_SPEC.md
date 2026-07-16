@@ -10,7 +10,8 @@ It is a proof of concept, not a safety-critical navigation system.
 
 ## User behavior
 
-The user replays a bounded section of an owned recording. For each final transcript, the system
+The user replays the full owned Gongneung-to-Children's Grand Park recording by default. A bounded
+section is an explicit diagnostic option. For each final transcript, the system
 may emit:
 
 - `CURRENT_STATION`: canonical station with an explicit `역` or known secondary-name pattern;

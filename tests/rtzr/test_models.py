@@ -53,7 +53,7 @@ def test_whisper_rejects_streaming_keyword_boosting() -> None:
             sample_rate=16_000,
             model_name=StreamingModel.WHISPER,
             language="ko",
-            keywords=(KeywordBoost(text="노원역"),),
+            keywords=(KeywordBoost(text="공릉역"),),
         )
 
 
@@ -103,7 +103,7 @@ def test_partial_response_preserves_observed_nonzero_duration() -> None:
             "start_at": 0,
             "duration": 100,
             "final": False,
-            "alternatives": [{"text": "노원", "confidence": 0.5}],
+            "alternatives": [{"text": "공릉", "confidence": 0.5}],
         }
     )
 

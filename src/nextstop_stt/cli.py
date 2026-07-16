@@ -31,6 +31,7 @@ from nextstop_stt.evaluation.run_evaluation import (
     load_predictions,
 )
 from nextstop_stt.journey import (
+    LINE_7_DEMO_ROUTE,
     JourneyStatus,
     JourneyTracker,
     JourneyUpdate,
@@ -501,6 +502,13 @@ def journey_demo(
         float,
         typer.Option(min=-5.0, max=5.0, help="Higher score for the requested destination."),
     ] = 2.0,
+    show_text: Annotated[
+        bool,
+        typer.Option(
+            "--show-text",
+            help="Print finalized RTZR transcript text; may include nearby speech.",
+        ),
+    ] = False,
     output_file: Annotated[
         Path,
         typer.Option(help="Private JSON evidence under results/private/."),
@@ -551,6 +559,7 @@ def journey_demo(
 
     typer.echo(f"[입력] 파일: {source_file.name}")
     typer.echo(f"[목적지] {tracker.destination}")
+    typer.echo(f"[인식 노선] {' → '.join(LINE_7_DEMO_ROUTE)}")
     typer.echo(
         f"[RTZR 설정] model=sommers_ko domain={domain.value} "
         f"route keyword={keyword_score:.1f} destination={destination_score:.1f}"
@@ -568,6 +577,7 @@ def journey_demo(
 
     typer.echo("[연결] RTZR Streaming STT 연결 및 실시간 재생 시작")
     typer.echo("[역 인식 기록] 새 역이 확인되면 아래에 한 줄씩 추가됩니다.")
+    typer.echo("[조작] Ctrl+C: 중단하고 그때까지 받은 RTZR 응답 저장")
     try:
         partial, final, _, stations, candidates = asyncio.run(
             _stream_file(
@@ -581,11 +591,15 @@ def journey_demo(
                 target_station=None,
                 keywords=keywords,
                 output_file=safe_output,
-                show_text=False,
+                show_text=show_text,
                 detect_stations=True,
                 journey_tracker=tracker,
             )
         )
+    except KeyboardInterrupt:
+        typer.echo("\n[중단] 지금까지 받은 RTZR 응답을 비공개 결과에 저장했습니다.")
+        typer.echo(f"[근거 저장] {safe_output.as_posix()}")
+        raise typer.Exit(code=130) from None
     except (AudioSourceError, RTZRError, ValueError) as error:
         typer.echo(f"실행 실패: {error}", err=True)
         raise typer.Exit(code=1) from None
@@ -649,6 +663,44 @@ async def _stream_file(
     station_records = []
     journey_records = []
     session_started_at = time.monotonic()
+    run_created_at = datetime.now(UTC).isoformat()
+    run_status = "connecting"
+
+    def save_artifact(status: str) -> None:
+        if output_file is None:
+            return
+        _write_private_json(
+            output_file,
+            {
+                "schema_version": 1,
+                "run": {
+                    "created_at": run_created_at,
+                    "api": "streaming",
+                    "status": status,
+                    "config": config.to_query_params(),
+                    "segment": {
+                        "start_ms": start_ms,
+                        "duration_ms": duration_ms,
+                    },
+                    "session_elapsed_ms": round(
+                        (time.monotonic() - session_started_at) * 1_000
+                    ),
+                },
+                "summary": {
+                    "partial_count": partial_count,
+                    "final_count": final_count,
+                    "station_count": station_count,
+                    "candidate_count": candidate_count,
+                    "alert_count": alert_count,
+                },
+                "responses": response_records,
+                "decisions": decision_records,
+                "station_detections": station_records,
+                "journey": journey_records,
+            },
+        )
+
+    save_artifact(run_status)
     replay_display = None
     if journey_tracker is not None:
         replay_display = _ReplayDisplay(
@@ -718,6 +770,12 @@ async def _stream_file(
                             "source_time_ms": start_ms + response.start_at,
                         }
                     )
+            if replay_display is not None:
+                replay_display.update_activity(
+                    partial_count=partial_count,
+                    final_count=final_count,
+                    candidate_count=candidate_count,
+                )
             if detector is not None:
                 decision = detector.evaluate(response)
                 decision_records.append(
@@ -732,43 +790,38 @@ async def _stream_file(
                     alert_count += 1
                     typer.echo(f"ALERT: {decision.target_station}")
             if show_text:
-                state = "FINAL" if response.final else "PARTIAL"
-                typer.echo(f"[{state}] {response.primary_text}")
+                if journey_tracker is not None:
+                    if response.final and replay_display is not None:
+                        replay_display.add_transcript(
+                            response.primary_text,
+                            source_time_ms=start_ms + response.start_at,
+                        )
+                else:
+                    state = "FINAL" if response.final else "PARTIAL"
+                    typer.echo(f"[{state}] {response.primary_text}")
+            if response.final:
+                run_status = "in_progress"
+                save_artifact(run_status)
+        run_status = "completed"
+    except asyncio.CancelledError:
+        run_status = "interrupted"
+        raise
+    except Exception:
+        run_status = "failed"
+        raise
     finally:
+        save_artifact(run_status)
         if replay_display is not None:
             await replay_display.stop()
         await provider.aclose()
-    if output_file is not None:
-        _write_private_json(
-            output_file,
-            {
-                "schema_version": 1,
-                "run": {
-                    "created_at": datetime.now(UTC).isoformat(),
-                    "api": "streaming",
-                    "config": config.to_query_params(),
-                    "segment": {
-                        "start_ms": start_ms,
-                        "duration_ms": duration_ms,
-                    },
-                    "session_elapsed_ms": round(
-                        (time.monotonic() - session_started_at) * 1_000
-                    ),
-                },
-                "responses": response_records,
-                "decisions": decision_records,
-                "station_detections": station_records,
-                "journey": journey_records,
-            },
-        )
     return partial_count, final_count, alert_count, station_count, candidate_count
 
 
 def _direction_text(direction: TravelDirection) -> str:
     if direction is TravelDirection.TOWARD_CHILDRENS_GRAND_PARK:
         return "어린이대공원 방향"
-    if direction is TravelDirection.TOWARD_NOWON:
-        return "노원 방향"
+    if direction is TravelDirection.TOWARD_GONGNEUNG:
+        return "공릉 방향"
     return "판별 중(다음 역 인식 대기)"
 
 
@@ -789,6 +842,9 @@ class _ReplayDisplay:
         self._console = console or Console()
         self._current_station: str | None = None
         self._station_number = 0
+        self._partial_count = 0
+        self._final_count = 0
+        self._candidate_count = 0
         self._task: asyncio.Task[None] | None = None
         self._status = Status(
             self._status_text(0),
@@ -819,6 +875,26 @@ class _ReplayDisplay:
             markup=False,
         )
 
+    def update_activity(
+        self,
+        *,
+        partial_count: int,
+        final_count: int,
+        candidate_count: int,
+    ) -> None:
+        self._partial_count = partial_count
+        self._final_count = final_count
+        self._candidate_count = candidate_count
+
+    def add_transcript(self, text: str, *, source_time_ms: int) -> None:
+        compact = " ".join(text.split())
+        if not compact:
+            return
+        self._console.print(
+            f"[STT {_clock_text(source_time_ms)}] {compact}",
+            markup=False,
+        )
+
     async def _refresh(self) -> None:
         while True:
             elapsed_ms = min(
@@ -836,8 +912,10 @@ class _ReplayDisplay:
         )
         return Text(
             f"이동 중 · {position} · "
+            f"RTZR p/f={self._partial_count}/{self._final_count} · "
+            f"후보={self._candidate_count} · "
             f"{_clock_text(elapsed_ms)} / {_clock_text(self._duration_ms)} · "
-            f"원본 {_clock_text(self._start_ms + elapsed_ms)}",
+            f"원본 {_clock_text(self._start_ms + elapsed_ms)} · Ctrl+C 중단",
             style="cyan",
         )
 

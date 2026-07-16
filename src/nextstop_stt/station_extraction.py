@@ -39,9 +39,6 @@ class StationMention:
 
 
 LINE_7_DEMO_STATIONS = (
-    StationDefinition("노원"),
-    StationDefinition("중계"),
-    StationDefinition("하계"),
     StationDefinition("공릉"),
     StationDefinition("태릉입구"),
     StationDefinition("먹골"),

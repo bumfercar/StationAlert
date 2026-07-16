@@ -67,6 +67,10 @@ def test_does_not_accept_inner_substring() -> None:
 def test_keyword_vocabulary_contains_canonical_and_secondary_names() -> None:
     vocabulary = line7_keyword_vocabulary()
 
+    assert "공릉" in vocabulary
+    assert "노원" not in vocabulary
+    assert "중계" not in vocabulary
+    assert "하계" not in vocabulary
     assert "어린이대공원" in vocabulary
     assert "세종대" in vocabulary
     assert len(vocabulary) == len(set(vocabulary))

@@ -27,7 +27,7 @@ class TravelDirection(StrEnum):
 
     UNKNOWN = "unknown"
     TOWARD_CHILDRENS_GRAND_PARK = "toward_childrens_grand_park"
-    TOWARD_NOWON = "toward_nowon"
+    TOWARD_GONGNEUNG = "toward_gongneung"
 
 
 @dataclass(frozen=True)
@@ -48,7 +48,10 @@ class JourneyTracker:
         canonical = canonical_station_name(destination).removesuffix("역")
         if canonical not in LINE_7_DEMO_ROUTE:
             supported = ", ".join(LINE_7_DEMO_ROUTE)
-            raise ValueError(f"destination must be one of: {supported}")
+            raise ValueError(
+                "하차역은 녹음 구간(공릉~어린이대공원) 안에서 선택해주세요: "
+                f"{supported}"
+            )
         self.destination = canonical
         self._destination_index = LINE_7_DEMO_ROUTE.index(canonical)
         self._current_index: int | None = None
@@ -74,7 +77,7 @@ class JourneyTracker:
         observed_direction = (
             TravelDirection.TOWARD_CHILDRENS_GRAND_PARK
             if station_index > self._current_index
-            else TravelDirection.TOWARD_NOWON
+            else TravelDirection.TOWARD_GONGNEUNG
         )
         if self._direction is TravelDirection.UNKNOWN:
             self._direction = observed_direction
@@ -98,7 +101,7 @@ class JourneyTracker:
         return self._update(station, remaining, status)
 
     def _remaining(self, station_index: int) -> int:
-        if self._direction is TravelDirection.TOWARD_NOWON:
+        if self._direction is TravelDirection.TOWARD_GONGNEUNG:
             return station_index - self._destination_index
         return self._destination_index - station_index
 

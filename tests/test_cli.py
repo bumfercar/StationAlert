@@ -1,9 +1,14 @@
+import asyncio
+import json
 import re
 
+import pytest
+from rich.console import Console
 from typer.testing import CliRunner
 
 import nextstop_stt.cli as cli_module
 from nextstop_stt.cli import app
+from nextstop_stt.rtzr.models import StreamingDomain, StreamingModel, StreamingTranscript
 
 runner = CliRunner()
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -94,6 +99,7 @@ def test_journey_demo_help_exposes_user_inputs_and_safe_defaults() -> None:
     assert "--duration-seconds" in output
     assert "--keyword-score" in output
     assert "--destination-score" in output
+    assert "--show-text" in output
     assert "--output-file" in output
 
 
@@ -136,11 +142,33 @@ def test_journey_demo_shows_prepare_and_arrival_flow(tmp_path, monkeypatch) -> N
     assert "어린이대공원역" in result.output
     assert "목적지 도착" in result.output
     assert "인식 역=3개" in result.output
+    assert "공릉 → 태릉입구 → 먹골" in result.output
     assert captured["duration_ms"] == 60_000
     keyword_scores = {boost.text: boost.score for boost in captured["keywords"]}
     assert keyword_scores["어린이대공원"] == 2.0
     assert keyword_scores["세종대"] == 2.0
     assert keyword_scores["군자"] == 1.0
+
+
+def test_journey_demo_rejects_destination_outside_recording_before_api(tmp_path) -> None:
+    source = tmp_path / "owned.m4a"
+    source.write_bytes(b"private audio placeholder")
+
+    result = runner.invoke(
+        app,
+        [
+            "journey-demo",
+            "--source-file",
+            str(source),
+            "--destination",
+            "중계",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "공릉~어린이대공원" in result.output
+    assert "RTZR Streaming STT 연결" not in result.output
 
 
 def test_streaming_keyword_parser_uses_explicit_or_default_score() -> None:
@@ -182,6 +210,93 @@ def test_journey_summary_keeps_station_list_compact() -> None:
     assert cli_module._journey_summary(second) == (
         "어린이대공원 방향 · 목적지까지 7정거장"
     )
+
+
+def test_replay_display_exposes_streaming_activity_without_transcript() -> None:
+    display = cli_module._ReplayDisplay(
+        duration_ms=60_000,
+        start_ms=0,
+        started_at=0.0,
+        console=Console(force_terminal=False),
+    )
+
+    display.update_activity(partial_count=7, final_count=3, candidate_count=1)
+
+    status = display._status_text(12_000).plain
+    assert "RTZR p/f=7/3" in status
+    assert "후보=1" in status
+    assert "첫 역 방송 대기" in status
+
+
+def test_interrupted_stream_saves_received_responses(tmp_path, monkeypatch) -> None:
+    output = tmp_path / "interrupted.json"
+    source_file = tmp_path / "owned.m4a"
+    source_file.write_bytes(b"private audio placeholder")
+
+    class FakeCredentials:
+        @classmethod
+        def from_env(cls):
+            return cls()
+
+    class FakeProvider:
+        def __init__(self, _credentials) -> None:
+            pass
+
+        async def aclose(self) -> None:
+            return None
+
+    class FakeSource:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        async def frames(self):
+            if False:
+                yield b""
+
+    class FakeClient:
+        def __init__(self, _provider, _config) -> None:
+            pass
+
+        async def transcribe(self, _frames):
+            yield StreamingTranscript.model_validate(
+                {
+                    "seq": 1,
+                    "start_at": 1_000,
+                    "duration": 500,
+                    "final": True,
+                    "alternatives": [{"text": "공릉", "confidence": 0.8}],
+                }
+            )
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(cli_module, "RTZRCredentials", FakeCredentials)
+    monkeypatch.setattr(cli_module, "RTZRTokenProvider", FakeProvider)
+    monkeypatch.setattr(cli_module, "FFmpegPCMSource", FakeSource)
+    monkeypatch.setattr(cli_module, "RTZRStreamingClient", FakeClient)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            cli_module._stream_file(
+                source_file=source_file,
+                duration_ms=60_000,
+                start_ms=0,
+                sample_rate=16_000,
+                domain=StreamingDomain.MEETING,
+                model=StreamingModel.SOMMERS_KO,
+                language=None,
+                target_station=None,
+                keywords=(),
+                output_file=output,
+                show_text=False,
+                detect_stations=True,
+                journey_tracker=None,
+            )
+        )
+
+    artifact = json.loads(output.read_text(encoding="utf-8"))
+    assert artifact["run"]["status"] == "interrupted"
+    assert artifact["summary"]["final_count"] == 1
+    assert len(artifact["responses"]) == 1
 
 
 def test_batch_file_help_exposes_model_domain_and_private_output() -> None:

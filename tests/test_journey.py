@@ -45,11 +45,11 @@ def test_journey_infers_reverse_direction() -> None:
 
     update = tracker.observe("상봉")
 
-    assert update.direction is TravelDirection.TOWARD_NOWON
+    assert update.direction is TravelDirection.TOWARD_GONGNEUNG
     assert update.status is JourneyStatus.EN_ROUTE
     assert update.stations_remaining == 2
 
 
 def test_journey_rejects_unsupported_destination() -> None:
-    with pytest.raises(ValueError, match="destination must be one of"):
-        JourneyTracker("강남역")
+    with pytest.raises(ValueError, match="공릉~어린이대공원"):
+        JourneyTracker("중계역")
