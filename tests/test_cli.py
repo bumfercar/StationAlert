@@ -146,6 +146,7 @@ def test_journey_demo_shows_prepare_and_arrival_flow(tmp_path, monkeypatch) -> N
     assert "곧 도착합니다" in result.output
     assert "어린이대공원역" in result.output
     assert "이번 역에서 하차하세요" in result.output
+    assert "00. 경로 기준 공릉역 출발" in result.output
     assert "인식된 역 3개" in result.output
     assert "공릉 → 태릉입구 → 먹골" in result.output
     assert captured["duration_ms"] == 60_000
@@ -220,6 +221,14 @@ def test_journey_summary_keeps_station_list_compact() -> None:
     assert cli_module._journey_summary(second) == (
         "어린이대공원 방향 · 목적지까지 7정거장"
     )
+
+
+def test_route_context_row_separates_known_route_from_stt_detection() -> None:
+    tracker = cli_module.JourneyTracker("태릉입구", initial_station="공릉")
+
+    row = cli_module._route_context_row(tracker.route_context())
+
+    assert row == "00. 경로 기준 공릉역 출발 | 목적지까지 1정거장"
 
 
 def test_replay_display_exposes_streaming_activity_without_transcript() -> None:

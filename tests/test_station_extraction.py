@@ -30,6 +30,14 @@ def test_extracts_spoken_station_form_with_spaces() -> None:
     assert mentions[0].reason is StationMatchReason.CANONICAL_SUFFIX
 
 
+def test_english_subway_context_promotes_spoken_station_form() -> None:
+    mentions = extract_line7_station_mentions("this stop is 태능 입구")
+
+    assert len(mentions) == 1
+    assert mentions[0].station == "태릉입구"
+    assert mentions[0].reason is StationMatchReason.CANONICAL_ANNOUNCEMENT_CONTEXT
+
+
 def test_known_alias_is_strong_evidence_even_when_station_suffix_is_dropped() -> None:
     mentions = extract_line7_station_mentions("어린이대공원 세종대")
 
@@ -54,6 +62,14 @@ def test_bare_station_with_door_context_is_current_station_evidence() -> None:
     assert mentions[0].station == "먹골"
     assert mentions[0].reason is StationMatchReason.CANONICAL_ANNOUNCEMENT_CONTEXT
     assert mentions[0].is_current_station_evidence is True
+
+
+def test_doors_context_promotes_station_before_english_announcement() -> None:
+    mentions = extract_line7_station_mentions("중곡 the doors on your right")
+
+    assert len(mentions) == 1
+    assert mentions[0].station == "중곡"
+    assert mentions[0].reason is StationMatchReason.CANONICAL_ANNOUNCEMENT_CONTEXT
 
 
 def test_unrelated_bare_keyword_hallucination_stays_weak() -> None:

@@ -566,7 +566,7 @@ def journey_demo(
     if destination is None:
         destination = typer.prompt("목적지역을 입력해주세요 (공릉~어린이대공원)")
     try:
-        tracker = JourneyTracker(destination)
+        tracker = JourneyTracker(destination, initial_station=LINE_7_DEMO_ROUTE[0])
         safe_output = _private_result_path(output_file)
         total_duration_ms = probe_audio_duration_ms(source_file)
         start_ms = round(start_seconds * 1_000)
@@ -593,6 +593,9 @@ def journey_demo(
     typer.echo(f"목적지역: {tracker.destination}역")
     typer.echo(f"사용 음성: {source_file.name} ({_clock_text(total_duration_ms)})")
     typer.echo(f"인식 구간: {' → '.join(LINE_7_DEMO_ROUTE)}")
+    route_context = tracker.route_context()
+    if route_context is not None:
+        typer.echo(_route_context_row(route_context))
     if not yes and not typer.confirm("RTZR Streaming 인식을 시작할까요?"):
         typer.echo("사용자가 실행을 취소했습니다.")
         raise typer.Exit()
@@ -980,6 +983,14 @@ def _journey_summary(update: JourneyUpdate) -> str:
         f"{_direction_text(update.direction)}"
         f" · 목적지까지 {update.stations_remaining}정거장"
     )
+
+
+def _route_context_row(update: JourneyUpdate) -> str:
+    if update.status is JourneyStatus.ARRIVED:
+        summary = "목적지역이 녹음 시작역입니다."
+    else:
+        summary = f"목적지까지 {update.stations_remaining}정거장"
+    return f"00. 경로 기준 {update.station}역 출발 | {summary}"
 
 
 def _station_row(

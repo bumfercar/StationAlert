@@ -53,3 +53,15 @@ def test_journey_infers_reverse_direction() -> None:
 def test_journey_rejects_unsupported_destination() -> None:
     with pytest.raises(ValueError, match="공릉~어린이대공원"):
         JourneyTracker("중계역")
+
+
+def test_journey_can_start_from_known_recording_route() -> None:
+    tracker = JourneyTracker("태릉입구", initial_station="공릉")
+
+    context = tracker.route_context()
+    update = tracker.observe("먹골")
+
+    assert context is not None
+    assert context.station == "공릉"
+    assert context.stations_remaining == 1
+    assert update.status is JourneyStatus.PASSED_DESTINATION

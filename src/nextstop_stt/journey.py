@@ -44,7 +44,7 @@ class JourneyUpdate:
 class JourneyTracker:
     """Infer travel direction and track position within the recorded corridor."""
 
-    def __init__(self, destination: str) -> None:
+    def __init__(self, destination: str, *, initial_station: str | None = None) -> None:
         canonical = canonical_station_name(destination).removesuffix("역")
         if canonical not in LINE_7_DEMO_ROUTE:
             supported = ", ".join(LINE_7_DEMO_ROUTE)
@@ -52,10 +52,25 @@ class JourneyTracker:
                 "하차역은 녹음 구간(공릉~어린이대공원) 안에서 선택해주세요: "
                 f"{supported}"
             )
+        if initial_station is not None and initial_station not in LINE_7_DEMO_ROUTE:
+            raise ValueError("initial_station is outside the demo route")
         self.destination = canonical
         self._destination_index = LINE_7_DEMO_ROUTE.index(canonical)
-        self._current_index: int | None = None
+        self._current_index: int | None = (
+            LINE_7_DEMO_ROUTE.index(initial_station)
+            if initial_station is not None
+            else None
+        )
         self._direction = TravelDirection.UNKNOWN
+
+    def route_context(self) -> JourneyUpdate | None:
+        """Return the known recording start position, separate from STT evidence."""
+        if self._current_index is None:
+            return None
+        station = LINE_7_DEMO_ROUTE[self._current_index]
+        remaining = self._remaining(self._current_index)
+        status = JourneyStatus.ARRIVED if remaining == 0 else JourneyStatus.EN_ROUTE
+        return self._update(station, remaining, status)
 
     def observe(self, station: str) -> JourneyUpdate:
         """Apply one strong station extraction and reject direction reversals."""

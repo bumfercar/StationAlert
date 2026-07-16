@@ -70,17 +70,25 @@ LINE_7_DEMO_STATIONS = (
 
 _CURRENT_STATION_CONTEXT = frozenset(
     {
+        "이번역",
         "이번",
+        "다음",
         "내리실",
+        "내리실문",
         "출입문",
         "오른쪽",
         "왼쪽",
+        "승강장",
+        "발빠짐",
+        "this",
+        "stop",
+        "station",
         "door",
         "doors",
     }
 )
 
-_PHONETIC_RECOVERY_CONTEXT = frozenset({"이번", "this", "next", "stop", "station"})
+_PHONETIC_RECOVERY_CONTEXT = frozenset({"이번역", "이번", "this", "next", "stop", "station"})
 _MAX_PHONETIC_DISTANCE = 1 / 3
 _MAX_PHONETIC_EDITS = 2
 _MIN_RUNNER_UP_MARGIN = 0.2
@@ -217,7 +225,7 @@ def _recover_phonetic_station(tokens: list[str]) -> StationMention | None:
         for station in LINE_7_DEMO_STATIONS:
             distances = tuple(
                 _edit_measure(phonemes, _hangul_phonemes(spoken_form))
-                for spoken_form in (station.name, *station.aliases)
+                for spoken_form in (station.name, *station.aliases, *station.spoken_forms)
             )
             by_station[station.name] = min(distances)
         ranked = sorted(by_station.items(), key=lambda item: (*item[1], item[0]))
