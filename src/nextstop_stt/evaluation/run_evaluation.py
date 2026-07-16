@@ -39,6 +39,7 @@ class GroundTruthRecord(BaseModel):
     station: str = ""
     announcement_type: str = Field(min_length=1)
     reference_text: str
+    include_in_cer: bool = True
     expected_alert: bool
     overlapping_speech: bool
     noise_level: str = Field(min_length=1)
@@ -97,6 +98,7 @@ def evaluate_run(
     transcript_pairs = [
         (truth_by_id[segment_id].reference_text, prediction_by_id[segment_id].hypothesis_text)
         for segment_id in ordered_ids
+        if truth_by_id[segment_id].include_in_cer
     ]
     station_pairs = [
         (truth_by_id[segment_id].station, prediction_by_id[segment_id].hypothesis_text)
@@ -115,8 +117,16 @@ def evaluate_run(
     for segment_id in ordered_ids:
         truth = truth_by_id[segment_id]
         prediction = prediction_by_id[segment_id]
-        normalized_reference = normalize_for_cer(truth.reference_text)
-        normalized_hypothesis = normalize_for_cer(prediction.hypothesis_text)
+        character_edits = None
+        reference_characters = None
+        if truth.include_in_cer:
+            normalized_reference = normalize_for_cer(truth.reference_text)
+            normalized_hypothesis = normalize_for_cer(prediction.hypothesis_text)
+            character_edits = character_edit_distance(
+                normalized_reference,
+                normalized_hypothesis,
+            )
+            reference_characters = len(normalized_reference)
         station_match = None
         if truth.station.strip():
             station_match = contains_station(
@@ -127,11 +137,9 @@ def evaluate_run(
             {
                 "segment_id": segment_id,
                 "status": prediction.status.value,
-                "character_edits": character_edit_distance(
-                    normalized_reference,
-                    normalized_hypothesis,
-                ),
-                "reference_characters": len(normalized_reference),
+                "include_in_cer": truth.include_in_cer,
+                "character_edits": character_edits,
+                "reference_characters": reference_characters,
                 "station_match": station_match,
                 "expected_alert": truth.expected_alert,
                 "predicted_alert": prediction.predicted_alert,
@@ -191,6 +199,8 @@ def _parse_boolean_fields(
 ) -> dict[str, str | bool | None]:
     parsed: dict[str, str | bool | None] = dict(row)
     fields = ("expected_alert", "overlapping_speech")
+    if model is GroundTruthRecord and "include_in_cer" in row:
+        fields += ("include_in_cer",)
     if model is PredictionRecord:
         fields = ("predicted_alert",)
     for field in fields:
