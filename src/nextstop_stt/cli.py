@@ -54,6 +54,7 @@ from nextstop_stt.rtzr.streaming_client import RTZRStreamingClient
 from nextstop_stt.station_extraction import (
     extract_line7_station_mentions,
     line7_keyword_vocabulary,
+    line7_station_keyword_vocabulary,
 )
 
 app = typer.Typer(
@@ -494,8 +495,12 @@ def journey_demo(
     domain: Annotated[StreamingDomain, typer.Option()] = StreamingDomain.MEETING,
     keyword_score: Annotated[
         float,
-        typer.Option(min=-5.0, max=5.0, help="Equal score for the demo route vocabulary."),
+        typer.Option(min=-5.0, max=5.0, help="Score for non-destination route stations."),
     ] = 1.0,
+    destination_score: Annotated[
+        float,
+        typer.Option(min=-5.0, max=5.0, help="Higher score for the requested destination."),
+    ] = 2.0,
     output_file: Annotated[
         Path,
         typer.Option(help="Private JSON evidence under results/private/."),
@@ -532,7 +537,14 @@ def journey_demo(
             if duration_seconds is None
             else min(round(duration_seconds * 1_000), available_ms)
         )
-        keywords = _merge_line7_keyword_boosts((), score=keyword_score)
+        destination_boosts = tuple(
+            KeywordBoost(text=text, score=destination_score)
+            for text in line7_station_keyword_vocabulary(tracker.destination)
+        )
+        keywords = _merge_line7_keyword_boosts(
+            destination_boosts,
+            score=keyword_score,
+        )
     except (AudioSourceError, ValueError) as error:
         typer.echo(f"실행 실패: {error}", err=True)
         raise typer.Exit(code=1) from None
@@ -541,7 +553,7 @@ def journey_demo(
     typer.echo(f"[목적지] {tracker.destination}")
     typer.echo(
         f"[RTZR 설정] model=sommers_ko domain={domain.value} "
-        f"Line7 keyword score={keyword_score:.1f}"
+        f"route keyword={keyword_score:.1f} destination={destination_score:.1f}"
     )
     typer.echo(
         f"[원본 길이] {_clock_text(total_duration_ms)}"

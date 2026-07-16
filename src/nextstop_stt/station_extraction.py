@@ -77,6 +77,14 @@ def line7_keyword_vocabulary() -> tuple[str, ...]:
     )
 
 
+def line7_station_keyword_vocabulary(station_name: str) -> tuple[str, ...]:
+    """Return the canonical and secondary names for one destination station."""
+    for station in LINE_7_DEMO_STATIONS:
+        if station.name == station_name:
+            return (station.name, *station.aliases)
+    raise ValueError("station_name is outside the demo route")
+
+
 def extract_line7_station_mentions(text: str) -> tuple[StationMention, ...]:
     """Extract exact station tokens and alias-aware station phrases from one final result."""
     tokens = normalize_text(text).split()

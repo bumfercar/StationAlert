@@ -2,6 +2,7 @@ from nextstop_stt.station_extraction import (
     StationMatchReason,
     extract_line7_station_mentions,
     line7_keyword_vocabulary,
+    line7_station_keyword_vocabulary,
 )
 
 
@@ -69,3 +70,10 @@ def test_keyword_vocabulary_contains_canonical_and_secondary_names() -> None:
     assert "어린이대공원" in vocabulary
     assert "세종대" in vocabulary
     assert len(vocabulary) == len(set(vocabulary))
+
+
+def test_destination_keyword_vocabulary_contains_secondary_name() -> None:
+    assert line7_station_keyword_vocabulary("어린이대공원") == (
+        "어린이대공원",
+        "세종대",
+    )

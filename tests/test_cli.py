@@ -93,6 +93,7 @@ def test_journey_demo_help_exposes_user_inputs_and_safe_defaults() -> None:
     assert "--start-seconds" in output
     assert "--duration-seconds" in output
     assert "--keyword-score" in output
+    assert "--destination-score" in output
     assert "--output-file" in output
 
 
@@ -136,6 +137,10 @@ def test_journey_demo_shows_prepare_and_arrival_flow(tmp_path, monkeypatch) -> N
     assert "목적지 도착" in result.output
     assert "인식 역=3개" in result.output
     assert captured["duration_ms"] == 60_000
+    keyword_scores = {boost.text: boost.score for boost in captured["keywords"]}
+    assert keyword_scores["어린이대공원"] == 2.0
+    assert keyword_scores["세종대"] == 2.0
+    assert keyword_scores["군자"] == 1.0
 
 
 def test_streaming_keyword_parser_uses_explicit_or_default_score() -> None:
