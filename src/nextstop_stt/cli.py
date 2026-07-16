@@ -57,7 +57,6 @@ from nextstop_stt.rtzr.models import (
 )
 from nextstop_stt.rtzr.streaming_client import RTZRStreamingClient
 from nextstop_stt.station_extraction import (
-    StationMatchReason,
     StationMention,
     extract_line7_station_mentions,
     line7_keyword_vocabulary,
@@ -535,10 +534,10 @@ def journey_demo(
     show_text: Annotated[
         bool,
         typer.Option(
-            "--show-text",
+            "--show-text/--hide-text",
             help="Print finalized RTZR transcript text; may include nearby speech.",
         ),
-    ] = False,
+    ] = True,
     output_file: Annotated[
         Path,
         typer.Option(help="Private JSON evidence under results/private/."),
@@ -549,19 +548,23 @@ def journey_demo(
     ] = False,
 ) -> None:
     """Interactively replay a recording and show the route to an exit station."""
-    typer.echo("=" * 64)
-    typer.echo(" NextStop STT | 지하철 현재역 인식 및 하차 안내")
-    typer.echo(" 파일을 실시간 속도로 전송해 마이크 입력을 재현합니다.")
-    typer.echo("=" * 64)
+    typer.echo("NextStop STT")
+    typer.echo("공릉역부터 어린이대공원역까지의 녹음에서 현재 역을 인식합니다.")
+    typer.echo("새 역이 들리면 한 줄씩 추가되고, 목적지역을 찾으면 자동 종료됩니다.")
 
     if source_file is None:
-        source_file = Path(typer.prompt("녹음 파일 경로를 입력해주세요"))
+        default_source = Path("../subwayaudio.m4a")
+        source_file = (
+            default_source
+            if default_source.is_file()
+            else Path(typer.prompt("녹음 파일 경로를 입력해주세요"))
+        )
     if not source_file.is_file():
         typer.echo("실행 실패: 녹음 파일을 찾을 수 없습니다.", err=True)
         raise typer.Exit(code=1)
 
     if destination is None:
-        destination = typer.prompt("하차하실 역명을 정확히 입력해주세요")
+        destination = typer.prompt("목적지역을 입력해주세요 (공릉~어린이대공원)")
     try:
         tracker = JourneyTracker(destination)
         safe_output = _private_result_path(output_file)
@@ -587,34 +590,18 @@ def journey_demo(
         typer.echo(f"실행 실패: {error}", err=True)
         raise typer.Exit(code=1) from None
 
-    typer.echo(f"[입력] 파일: {source_file.name}")
-    typer.echo(f"[목적지] {tracker.destination}")
-    typer.echo(f"[인식 노선] {' → '.join(LINE_7_DEMO_ROUTE)}")
-    typer.echo(
-        f"[RTZR 설정] model=sommers_ko domain={domain.value} "
-        f"route keyword={keyword_score:.1f} destination={destination_score:.1f}"
-    )
-    typer.echo(f"[오디오 전처리] {preprocess.value}")
-    typer.echo(
-        "[역명 복원] "
-        + ("안내 문맥 기반 음소 복원 사용" if contextual_recovery else "exact match만 사용")
-    )
-    typer.echo(
-        f"[원본 길이] {_clock_text(total_duration_ms)}"
-    )
-    typer.echo(
-        f"[재생 구간] {_clock_text(start_ms)}부터 {_clock_text(start_ms + duration_ms)} | "
-        f"총 {_clock_text(duration_ms)} 실시간 재생"
-    )
+    typer.echo(f"목적지역: {tracker.destination}역")
+    typer.echo(f"사용 음성: {source_file.name} ({_clock_text(total_duration_ms)})")
+    typer.echo(f"인식 구간: {' → '.join(LINE_7_DEMO_ROUTE)}")
     if not yes and not typer.confirm("RTZR Streaming 인식을 시작할까요?"):
         typer.echo("사용자가 실행을 취소했습니다.")
         raise typer.Exit()
 
-    typer.echo("[연결] RTZR Streaming STT 연결 및 실시간 재생 시작")
-    typer.echo("[역 인식 기록] 새 역이 확인되면 아래에 한 줄씩 추가됩니다.")
-    typer.echo("[조작] Ctrl+C: 중단하고 그때까지 받은 RTZR 응답 저장")
+    typer.echo("음성 인식을 시작합니다. 중단하려면 Ctrl+C를 누르세요.")
+    if show_text:
+        typer.echo("RTZR 전사문도 함께 표시합니다.")
     try:
-        partial, final, _, stations, candidates = asyncio.run(
+        _, final, _, stations, _ = asyncio.run(
             _stream_file(
                 source_file=source_file,
                 duration_ms=duration_ms,
@@ -635,22 +622,19 @@ def journey_demo(
         )
     except KeyboardInterrupt:
         typer.echo("\n[중단] 지금까지 받은 RTZR 응답을 비공개 결과에 저장했습니다.")
-        typer.echo(f"[근거 저장] {safe_output.as_posix()}")
+        typer.echo(f"실행 근거 저장: {safe_output.as_posix()}")
         raise typer.Exit(code=130) from None
     except (AudioSourceError, RTZRError, ValueError) as error:
         typer.echo(f"실행 실패: {error}", err=True)
         raise typer.Exit(code=1) from None
 
     typer.echo(
-        "[완료] "
-        f"인식 역={stations}개 | RTZR partial={partial}, final={final} "
-        f"| 보류 후보={candidates}개"
+        "완료: "
+        f"인식된 역 {stations}개, RTZR final {final}개"
     )
     if stations == 0:
-        typer.echo(
-            "[결과] 이 구간의 RTZR final 응답에서 확정 가능한 역명을 찾지 못했습니다."
-        )
-    typer.echo(f"[근거 저장] {safe_output.as_posix()}")
+        typer.echo("결과: 확정 가능한 역명을 찾지 못했습니다.")
+    typer.echo(f"실행 근거 저장: {safe_output.as_posix()}")
 
 
 async def _stream_file(
@@ -758,6 +742,7 @@ async def _stream_file(
         replay_display.start()
     try:
         async for response in client.transcribe(source.frames()):
+            stop_after_response = False
             received_elapsed_ms = round((time.monotonic() - session_started_at) * 1_000)
             response_records.append(
                 {
@@ -769,6 +754,16 @@ async def _stream_file(
                 final_count += 1
             else:
                 partial_count += 1
+            if show_text:
+                if journey_tracker is not None:
+                    if response.final and replay_display is not None:
+                        replay_display.add_transcript(
+                            response.primary_text,
+                            source_time_ms=start_ms + response.start_at,
+                        )
+                else:
+                    state = "FINAL" if response.final else "PARTIAL"
+                    typer.echo(f"[{state}] {response.primary_text}")
             if detect_stations and response.final:
                 mentions = extract_line7_station_mentions(
                     response.primary_text,
@@ -809,6 +804,8 @@ async def _stream_file(
                             )
                             if accepted:
                                 station_count += 1
+                                if update.status is JourneyStatus.ARRIVED:
+                                    stop_after_response = True
                         if journey_tracker is None:
                             station_count += 1
                     else:
@@ -845,19 +842,12 @@ async def _stream_file(
                 if decision.should_alert:
                     alert_count += 1
                     typer.echo(f"ALERT: {decision.target_station}")
-            if show_text:
-                if journey_tracker is not None:
-                    if response.final and replay_display is not None:
-                        replay_display.add_transcript(
-                            response.primary_text,
-                            source_time_ms=start_ms + response.start_at,
-                        )
-                else:
-                    state = "FINAL" if response.final else "PARTIAL"
-                    typer.echo(f"[{state}] {response.primary_text}")
             if response.final:
                 run_status = "in_progress"
                 save_artifact(run_status)
+            if stop_after_response:
+                run_status = "completed"
+                break
         run_status = "completed"
     except asyncio.CancelledError:
         run_status = "interrupted"
@@ -971,25 +961,23 @@ class _ReplayDisplay:
         position = (
             f"현재 {self._current_station}역"
             if self._current_station is not None
-            else "첫 역 방송 대기"
+            else "역 방송 대기"
         )
         return Text(
-            f"이동 중 · {position} · "
-            f"RTZR p/f={self._partial_count}/{self._final_count} · "
-            f"후보={self._candidate_count} · "
+            f"인식 중 · {position} · "
             f"{_clock_text(elapsed_ms)} / {_clock_text(self._duration_ms)} · "
-            f"원본 {_clock_text(self._start_ms + elapsed_ms)} · Ctrl+C 중단",
+            f"Ctrl+C 중단",
             style="cyan",
         )
 
 
 def _journey_summary(update: JourneyUpdate) -> str:
     if update.status is JourneyStatus.PREPARE_TO_EXIT:
-        return f"다음 역 {update.destination} · 하차 준비"
+        return f"다음 역이 {update.destination}역입니다. 곧 도착합니다."
     if update.status is JourneyStatus.ARRIVED:
-        return "목적지 도착 · 하차"
+        return "목적지역에 곧 도착합니다. 이번 역에서 하차하세요."
     if update.status is JourneyStatus.PASSED_DESTINATION:
-        return f"목적지 {update.destination} 통과"
+        return f"목적지 {update.destination}역을 지났습니다."
     return (
         f"{_direction_text(update.direction)}"
         f" · 목적지까지 {update.stations_remaining}정거장"
@@ -1004,18 +992,9 @@ def _station_row(
     mention: StationMention | None = None,
 ) -> str:
     row = (
-        f"{number:02d}. {update.station}역"
-        f" | 원본 {_clock_text(source_time_ms)}"
+        f"{number:02d}. 현재 {update.station}역입니다."
         f" | {_journey_summary(update)}"
     )
-    if (
-        mention is not None
-        and mention.reason is StationMatchReason.CONTEXTUAL_PHONETIC_RECOVERY
-    ):
-        row += (
-            f" | 문맥 복원 {mention.observed_token}→{mention.station}"
-            f" (음소거리 {mention.phonetic_distance:.3f})"
-        )
     return row
 
 

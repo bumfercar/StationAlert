@@ -59,37 +59,37 @@ uv run nextstop check-auth
 | Linux | `./scripts/run_demo.sh` |
 | Windows PowerShell | `powershell -ExecutionPolicy Bypass -File .\scripts\run_demo.ps1` |
 
-CLI는 다음 순서로 질문합니다.
+CLI는 기본으로 상위 폴더의 `subwayaudio.m4a`를 사용하고, 목적지역만 질문합니다.
+녹음 범위는 공릉역부터 어린이대공원역까지입니다.
 
 ```text
-NextStop STT | 지하철 현재역 인식 및 하차 안내
-녹음 파일 경로를 입력해주세요:
-하차하실 역명을 정확히 입력해주세요:
-RTZR Streaming 인식을 시작할까요? [y/N]:
+NextStop STT
+공릉역부터 어린이대공원역까지의 녹음에서 현재 역을 인식합니다.
+목적지역을 입력해주세요 (공릉~어린이대공원):
 ```
 
 파일 길이는 FFprobe로 자동 확인하며 기본적으로 녹음 전체를 실시간 속도로 재생합니다.
 `--start-seconds`와 `--duration-seconds`는 특정 실패 구간을 빠르게 다시 확인할 때만 쓰는
 고급 option입니다.
 
-현재 비공개 녹음을 처음부터 끝까지 실제 여행처럼 실행하려면 다음처럼 인자를 전달합니다.
+현재 비공개 녹음을 처음부터 끝까지 실제 여행처럼 실행하려면 스크립트만 실행하면 됩니다.
 
 ```bash
-./scripts/run_demo.sh --source-file ../subwayaudio.m4a --destination 어린이대공원 --yes
+./scripts/run_demo.sh
 ```
 
-RTZR가 실제로 반환하는 한국어·영어 final 전사를 함께 확인하려면 `--show-text`를
-추가합니다. 주변 승객 음성이 포함될 수 있으므로 사용자가 명시했을 때만 출력합니다.
+RTZR가 실제로 반환하는 한국어·영어 final 전사는 기본으로 함께 표시됩니다.
+화면이 너무 길어질 때는 `--hide-text`로 숨길 수 있습니다.
 
 ```bash
-./scripts/run_demo.sh --source-file ../subwayaudio.m4a --destination 공릉 --show-text --yes
+./scripts/run_demo.sh --hide-text
 ```
 
 원본이 19분 39초이므로 실제 실행도 같은 시간이 걸립니다. 목적지역 부근 UI만 20초 동안
 빠르게 확인하려면 고급 구간 option을 사용합니다.
 
 ```bash
-./scripts/run_demo.sh --source-file ../subwayaudio.m4a --destination 어린이대공원 --start-seconds 1124 --duration-seconds 20 --yes
+./scripts/run_demo.sh --destination 어린이대공원 --start-seconds 1124 --duration-seconds 20
 ```
 
 Windows에서도 같은 option을 `run_demo.ps1` 뒤에 붙이면 됩니다.
@@ -97,15 +97,16 @@ Windows에서도 같은 option을 `run_demo.ps1` 뒤에 붙이면 됩니다.
 실제 end-to-end 검증에서는 다음 흐름이 출력됐습니다.
 
 ```text
-[연결] RTZR Streaming STT 연결 및 실시간 재생 시작
-[인식 노선] 공릉 → 태릉입구 → 먹골 → 중화 → 상봉 → 면목 → 사가정 → 용마산 → 중곡 → 군자 → 어린이대공원
-[역 인식 기록] 새 역이 확인되면 아래에 한 줄씩 추가됩니다.
-[조작] Ctrl+C: 중단하고 그때까지 받은 RTZR 응답 저장
-◜ 이동 중 · 첫 역 방송 대기 · RTZR p/f=2/1 · 후보=0 · 00:03 / 00:20 · 원본 18:47 · Ctrl+C 중단
-01. 어린이대공원역 | 원본 18:48 | 목적지 도착 · 하차
-◝ 이동 중 · 현재 어린이대공원역 · 00:14 / 00:20 · 원본 18:58
-[완료] 인식 역=1개 | RTZR partial=12, final=5 | 보류 후보=1개
-[근거 저장] results/private/journey-demo.json
+목적지역: 어린이대공원역
+사용 음성: subwayaudio.m4a (19:39)
+인식 구간: 공릉 → 태릉입구 → 먹골 → 중화 → 상봉 → 면목 → 사가정 → 용마산 → 중곡 → 군자 → 어린이대공원
+음성 인식을 시작합니다. 중단하려면 Ctrl+C를 누르세요.
+RTZR 전사문도 함께 표시합니다.
+◜ 인식 중 · 역 방송 대기 · 00:03 / 00:20 · Ctrl+C 중단
+[STT 18:48] 어린이대공원 세종대 용
+01. 현재 어린이대공원역입니다. | 목적지역에 곧 도착합니다. 이번 역에서 하차하세요.
+완료: 인식된 역 1개, RTZR final 5개
+실행 근거 저장: results/private/journey-demo.json
 ```
 
 기본 decoder는 지하철 원거리 방송에서 가장 잘 동작한 `sommers_ko + MEETING`입니다.
@@ -173,13 +174,13 @@ STT입니다.
 안의 2.0을 적용하고 나머지 역은 1.0으로 유지했습니다. 이 혼합 설정이 전체 노선의
 최적값이라고 주장하지 않으며, 목적지 우선순위를 반영한 제품 정책으로 구분합니다.
 
-## 오디오 전처리와 문맥 기반 역명 복원
+## 오디오 전처리와 안내방송 패턴 후처리
 
 객실 저주파 진동과 원거리 방송을 분리하기 위해 같은 먹골 20초 구간에 FFmpeg
 전처리를 적용했습니다. 전처리 외 설정은 `sommers_ko + MEETING`, 노선 score 1.0,
 목적지 score 2.0으로 고정했습니다.
 
-| 전처리 | partial/final | RTZR의 먹골 유사 출력 | exact 역명 | 문맥 복원 |
+| 전처리 | partial/final | RTZR의 먹골 유사 출력 | exact 역명 | 후처리 결과 |
 | --- | ---: | --- | ---: | ---: |
 | `none` | 11/5 | `막고니` | 0 | 미적용 |
 | `subway_speech_v1` | 11/2 | `마보니` | 0 | 미적용 |
@@ -191,8 +192,9 @@ normalization을 함께 적용했지만 final 경계를 5개에서 2개로 크�
 늘지 않았습니다. 반면 저주파만 줄이는 `subway_rumble_cut_v1`은 `마콜`까지 가까워졌지만
 전처리만으로는 정답이 아닙니다. 따라서 기본값은 비교 기준인 `none`으로 유지합니다.
 
-`--recover`는 다음 조건을 모두 만족할 때만 `마콜 → 먹골`처럼 역명을 복원하는 opt-in
-기능입니다.
+`--recover`는 다음 조건을 모두 만족할 때만 `마콜 → 먹골`처럼 역명을 보정하는 opt-in
+기능입니다. 사용자 화면에는 내부 보정 이름을 노출하지 않고, 원문 전사와 인식된 현재역만
+보여줍니다.
 
 - final 안에 `이번…` 같은 안내방송 문맥이 있음
 - 후보가 공릉–어린이대공원 구간 역명으로 한정됨
@@ -204,13 +206,14 @@ token, 복원한 역명, 음소 거리를 함께 남깁니다. 따라서 이 결
 아니라 지하철 도메인 후처리의 역명 추출 성공**으로 평가합니다.
 
 ```bash
-./scripts/run_demo.sh --source-file ../subwayaudio.m4a --destination 먹골 \
+./scripts/run_demo.sh --destination 먹골 \
   --start-seconds 265 --duration-seconds 20 \
-  --preprocess subway_rumble_cut_v1 --recover --show-text --yes
+  --preprocess subway_rumble_cut_v1 --recover
 ```
 
 ```text
-01. 먹골역 | 원본 04:27 | 목적지 도착 · 하차 | 문맥 복원 마콜→먹골 (음소거리 0.333)
+[STT 04:27] 이번 역은 마콜...
+01. 현재 먹골역입니다. | 목적지역에 곧 도착합니다. 이번 역에서 하차하세요.
 ```
 
 ## 평가 기준

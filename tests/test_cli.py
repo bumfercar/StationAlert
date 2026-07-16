@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 import nextstop_stt.cli as cli_module
 from nextstop_stt.cli import app
 from nextstop_stt.rtzr.models import StreamingDomain, StreamingModel, StreamingTranscript
+from nextstop_stt.station_extraction import StationMatchReason
 
 runner = CliRunner()
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -103,6 +104,7 @@ def test_journey_demo_help_exposes_user_inputs_and_safe_defaults() -> None:
     assert "--destination-score" in output
     assert "--recover" in output
     assert "--show-text" in output
+    assert "--hide-text" in output
     assert "--output-file" in output
 
 
@@ -141,10 +143,10 @@ def test_journey_demo_shows_prepare_and_arrival_flow(tmp_path, monkeypatch) -> N
     )
 
     assert result.exit_code == 0
-    assert "하차 준비" in result.output
+    assert "곧 도착합니다" in result.output
     assert "어린이대공원역" in result.output
-    assert "목적지 도착" in result.output
-    assert "인식 역=3개" in result.output
+    assert "이번 역에서 하차하세요" in result.output
+    assert "인식된 역 3개" in result.output
     assert "공릉 → 태릉입구 → 먹골" in result.output
     assert captured["duration_ms"] == 60_000
     assert captured["preprocess"] is cli_module.AudioPreprocessPreset.NONE
@@ -228,9 +230,9 @@ def test_replay_display_exposes_streaming_activity_without_transcript() -> None:
     display.update_activity(partial_count=7, final_count=3, candidate_count=1)
 
     status = display._status_text(12_000).plain
-    assert "RTZR p/f=7/3" in status
-    assert "후보=1" in status
-    assert "첫 역 방송 대기" in status
+    assert "RTZR p/f" not in status
+    assert "후보" not in status
+    assert "역 방송 대기" in status
 
 
 def test_interrupted_stream_saves_received_responses(tmp_path, monkeypatch) -> None:
@@ -307,11 +309,87 @@ def test_interrupted_stream_saves_received_responses(tmp_path, monkeypatch) -> N
     }
 
 
-def test_station_row_discloses_contextual_phonetic_recovery() -> None:
+def test_stream_file_stops_after_destination_arrival(tmp_path, monkeypatch) -> None:
+    output = tmp_path / "arrived.json"
+    source_file = tmp_path / "owned.m4a"
+    source_file.write_bytes(b"private audio placeholder")
+
+    class FakeCredentials:
+        @classmethod
+        def from_env(cls):
+            return cls()
+
+    class FakeProvider:
+        def __init__(self, _credentials) -> None:
+            pass
+
+        async def aclose(self) -> None:
+            return None
+
+    class FakeSource:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        async def frames(self):
+            yield b"linear16"
+
+    class FakeClient:
+        emitted = 0
+
+        def __init__(self, _provider, _config) -> None:
+            pass
+
+        async def transcribe(self, _frames):
+            for seq, text in enumerate(
+                ("이번 역은 어린이대공원역입니다", "이번 역은 군자역입니다"),
+                start=1,
+            ):
+                FakeClient.emitted += 1
+                yield StreamingTranscript.model_validate(
+                    {
+                        "seq": seq,
+                        "start_at": seq * 1_000,
+                        "duration": 500,
+                        "final": True,
+                        "alternatives": [{"text": text, "confidence": 0.8}],
+                    }
+                )
+
+    monkeypatch.setattr(cli_module, "RTZRCredentials", FakeCredentials)
+    monkeypatch.setattr(cli_module, "RTZRTokenProvider", FakeProvider)
+    monkeypatch.setattr(cli_module, "FFmpegPCMSource", FakeSource)
+    monkeypatch.setattr(cli_module, "RTZRStreamingClient", FakeClient)
+
+    result = asyncio.run(
+        cli_module._stream_file(
+            source_file=source_file,
+            duration_ms=60_000,
+            start_ms=0,
+            sample_rate=16_000,
+            domain=StreamingDomain.MEETING,
+            model=StreamingModel.SOMMERS_KO,
+            language=None,
+            target_station=None,
+            keywords=(),
+            output_file=output,
+            show_text=False,
+            detect_stations=True,
+            journey_tracker=cli_module.JourneyTracker("어린이대공원"),
+        )
+    )
+
+    assert result == (0, 1, 0, 1, 0)
+    assert FakeClient.emitted == 1
+    artifact = json.loads(output.read_text(encoding="utf-8"))
+    assert artifact["run"]["status"] == "completed"
+    assert artifact["journey"][0]["status"] == "arrived"
+
+
+def test_station_row_keeps_demo_copy_user_facing() -> None:
     update = cli_module.JourneyTracker("어린이대공원").observe("먹골")
     mention = cli_module.StationMention(
         station="먹골",
-        reason=cli_module.StationMatchReason.CONTEXTUAL_PHONETIC_RECOVERY,
+        reason=StationMatchReason.CONTEXTUAL_PHONETIC_RECOVERY,
         observed_token="마콜",
         phonetic_distance=0.333,
     )
@@ -323,8 +401,9 @@ def test_station_row_discloses_contextual_phonetic_recovery() -> None:
         mention=mention,
     )
 
-    assert "문맥 복원 마콜→먹골" in row
-    assert "음소거리 0.333" in row
+    assert row.startswith("01. 현재 먹골역입니다.")
+    assert "문맥 복원" not in row
+    assert "음소거리" not in row
 
 
 def test_batch_file_help_exposes_model_domain_and_private_output() -> None:

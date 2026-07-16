@@ -32,8 +32,26 @@ if (-not $env:RTZR_CLIENT_ID -or -not $env:RTZR_CLIENT_SECRET) {
     throw "실행 실패: .env 또는 환경변수에 RTZR credential을 설정해주세요."
 }
 
+$HasSource = $false
+$HasPreprocess = $false
+$HasRecover = $false
+$HasYes = $false
+foreach ($Arg in $args) {
+    if ($Arg -eq "--source-file" -or $Arg.StartsWith("--source-file=")) { $HasSource = $true }
+    if ($Arg -eq "--preprocess" -or $Arg.StartsWith("--preprocess=")) { $HasPreprocess = $true }
+    if ($Arg -eq "--recover") { $HasRecover = $true }
+    if ($Arg -eq "--yes") { $HasYes = $true }
+}
+
+$DemoArgs = @()
+if (-not $HasSource) { $DemoArgs += @("--source-file", "../subwayaudio.m4a") }
+if (-not $HasPreprocess) { $DemoArgs += @("--preprocess", "subway_rumble_cut_v1") }
+if (-not $HasRecover) { $DemoArgs += "--recover" }
+if (-not $HasYes) { $DemoArgs += "--yes" }
+$CommandArgs = @($DemoArgs) + @($args)
+
 & $UvCommand sync --frozen --extra dev
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-& $UvCommand run nextstop journey-demo @args
+& $UvCommand run nextstop journey-demo @CommandArgs
 exit $LASTEXITCODE
