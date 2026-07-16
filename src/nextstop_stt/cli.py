@@ -42,6 +42,10 @@ from nextstop_stt.rtzr.models import (
     StreamingModel,
 )
 from nextstop_stt.rtzr.streaming_client import RTZRStreamingClient
+from nextstop_stt.station_extraction import (
+    extract_line7_station_mentions,
+    line7_keyword_vocabulary,
+)
 
 app = typer.Typer(
     add_completion=False,
@@ -365,6 +369,14 @@ def stream_file(
             help="Repeat Korean word[:score] boosts; sommers_ko only.",
         ),
     ] = None,
+    line7_keyword_score: Annotated[
+        float | None,
+        typer.Option(
+            min=-5.0,
+            max=5.0,
+            help="Boost every station and secondary name in the demo corridor equally.",
+        ),
+    ] = None,
     output_file: Annotated[
         Path | None,
         typer.Option(help="Optional private JSON path under results/private/."),
@@ -373,12 +385,22 @@ def stream_file(
         bool,
         typer.Option(help="Print transcript text. Keep disabled for private passenger audio."),
     ] = False,
+    detect_stations: Annotated[
+        bool,
+        typer.Option(
+            "--detect-station",
+            help="Print privacy-safe Line 7 station detections from final responses."
+        ),
+    ] = False,
 ) -> None:
     """Replay a bounded audio segment through RTZR Streaming STT."""
     try:
         safe_output = _private_result_path(output_file) if output_file else None
-        keywords = _parse_keyword_boosts(tuple(keyword or ()))
-        partial_count, final_count, alert_count = asyncio.run(
+        keywords = _merge_line7_keyword_boosts(
+            _parse_keyword_boosts(tuple(keyword or ())),
+            score=line7_keyword_score,
+        )
+        partial_count, final_count, alert_count, station_count, candidate_count = asyncio.run(
             _stream_file(
                 source_file=source_file,
                 duration_ms=duration_ms,
@@ -391,6 +413,7 @@ def stream_file(
                 keywords=keywords,
                 output_file=safe_output,
                 show_text=show_text,
+                detect_stations=detect_stations,
             )
         )
     except (AudioSourceError, RTZRError, ValueError) as error:
@@ -398,7 +421,9 @@ def stream_file(
         raise typer.Exit(code=1) from None
 
     typer.echo(
-        f"Streaming completed: partial={partial_count}, final={final_count}, alerts={alert_count}"
+        "Streaming completed: "
+        f"partial={partial_count}, final={final_count}, "
+        f"stations={station_count}, candidates={candidate_count}, alerts={alert_count}"
     )
     if safe_output is not None:
         typer.echo(f"Private result saved: {safe_output.as_posix()}")
@@ -422,6 +447,22 @@ def _parse_keyword_boosts(values: tuple[str, ...]) -> tuple[KeywordBoost, ...]:
     return tuple(boosts)
 
 
+def _merge_line7_keyword_boosts(
+    boosts: tuple[KeywordBoost, ...],
+    *,
+    score: float | None,
+) -> tuple[KeywordBoost, ...]:
+    if score is None:
+        return boosts
+    existing = {boost.text for boost in boosts}
+    corridor = tuple(
+        KeywordBoost(text=text, score=score)
+        for text in line7_keyword_vocabulary()
+        if text not in existing
+    )
+    return boosts + corridor
+
+
 async def _stream_file(
     *,
     source_file: Path,
@@ -435,7 +476,8 @@ async def _stream_file(
     keywords: tuple[KeywordBoost, ...],
     output_file: Path | None,
     show_text: bool,
-) -> tuple[int, int, int]:
+    detect_stations: bool,
+) -> tuple[int, int, int, int, int]:
     credentials = RTZRCredentials.from_env()
     provider = RTZRTokenProvider(credentials)
     source = FFmpegPCMSource(
@@ -460,8 +502,11 @@ async def _stream_file(
     partial_count = 0
     final_count = 0
     alert_count = 0
+    station_count = 0
+    candidate_count = 0
     response_records = []
     decision_records = []
+    station_records = []
     session_started_at = time.monotonic()
     try:
         async for response in client.transcribe(source.frames()):
@@ -476,6 +521,26 @@ async def _stream_file(
                 final_count += 1
             else:
                 partial_count += 1
+            if detect_stations and response.final:
+                for mention in extract_line7_station_mentions(response.primary_text):
+                    if mention.is_current_station_evidence:
+                        typer.echo(
+                            f"CURRENT_STATION: {mention.station} "
+                            f"reason={mention.reason.value} seq={response.seq}"
+                        )
+                        station_count += 1
+                    else:
+                        candidate_count += 1
+                    station_records.append(
+                        {
+                            "transcript_seq": response.seq,
+                            "station": mention.station,
+                            "reason": mention.reason.value,
+                            "is_current_station_evidence": (
+                                mention.is_current_station_evidence
+                            ),
+                        }
+                    )
             if detector is not None:
                 decision = detector.evaluate(response)
                 decision_records.append(
@@ -513,9 +578,10 @@ async def _stream_file(
                 },
                 "responses": response_records,
                 "decisions": decision_records,
+                "station_detections": station_records,
             },
         )
-    return partial_count, final_count, alert_count
+    return partial_count, final_count, alert_count, station_count, candidate_count
 
 
 if __name__ == "__main__":

@@ -2,22 +2,24 @@
 
 ## Product statement
 
-NextStop STT detects destination-related Seoul Subway Line 7 announcements from a realistic audio
-stream and measures how RTZR model configuration and subway-specific decision rules affect
-recognition, false alerts, and latency.
+NextStop STT extracts the current Seoul Subway Line 7 station from a realistic audio stream and
+measures how RTZR model configuration and subway-specific rules affect recognition, false station
+detections, and latency.
 
 It is a proof of concept, not a safety-critical navigation system.
 
 ## User behavior
 
-The user chooses a destination. The system may emit:
+The user replays a bounded section of an owned recording. For each final transcript, the system
+may emit:
 
-- `NEXT_STATION`: prepare to exit;
-- `ARRIVAL`: exit now;
-- `DIRECTION`, `TRANSFER`, `UNKNOWN`: no destination alert by default.
+- `CURRENT_STATION`: canonical station with an explicit `역` or known secondary-name pattern;
+- `STATION_CANDIDATE`: exact bare station token that needs more context;
+- no station: fuzzy or inner-substring matches are rejected.
 
-Each decision includes a stable machine-readable reason. Partial transcripts can be displayed but
-do not trigger alerts under the default policy.
+Each extraction includes a stable machine-readable reason. Partial transcripts can be displayed
+but do not establish the current station under the default policy. Destination alerts remain an
+optional extension after station extraction is measured.
 
 ## Input contract
 
@@ -31,11 +33,12 @@ raw LINEAR16 frames. Private M4A input is decoded locally and never committed.
 
 ## Research questions
 
-1. How well does default RTZR `sommers_ko` recognize station announcements?
+1. How well does default RTZR `sommers_ko` recognize and separate station announcements?
 2. How do `CALL` and `MEETING` differ on identical distant, noisy segments?
 3. Does moderate `sommers_ko` keyword boosting improve station recall, and at what false-alert
    cost?
-4. How much do announcement context and route order improve event precision?
+4. How much do secondary-name patterns, announcement context, and route order improve extraction
+   precision?
 5. How do RTZR `sommers_ko` and Streaming `whisper` differ in errors and latency?
 
 ## Controlled configuration sequence
@@ -64,12 +67,12 @@ One manually labeled announcement segment.
 
 ### Decision unit
 
-One labeled destination-decision opportunity, including target-present and target-absent hard
-negatives.
+One labeled current-station extraction opportunity, including station-present and station-absent
+hard negatives.
 
 - TP, FP, FN, TN;
 - precision, recall, F1;
-- false-alert count and missed-target count.
+- false-station count and missed-station count.
 
 ### Latency unit
 
@@ -102,8 +105,8 @@ audio source
   -> text normalization
   -> announcement classifier
   -> ordered route-state validator
-  -> destination decision
-  -> alert + structured log
+  -> current-station extraction
+  -> station + structured reason
 ```
 
 RTZR-specific code stays separate from subway decision logic. Evaluation reuses production
@@ -116,7 +119,7 @@ components and can replay saved RTZR fixtures without network access.
 - safe authentication and token refresh;
 - M4A-to-raw-LINEAR16 real-time file replay;
 - WebSocket partial/final handling and structured evidence;
-- final exact-match alert baseline;
+- final exact station-token extraction baseline;
 - clean-environment README and tests.
 
 ### P1: domain evidence
@@ -138,7 +141,7 @@ components and can replay saved RTZR fixtures without network access.
 - A real RTZR Streaming call is captured without exposing credentials.
 - File replay sends raw audio at a documented pace.
 - Partial and final responses are handled intentionally.
-- Every alert or suppression has a reason.
+- Every station extraction or suppression has a reason.
 - At least two meaningful RTZR configurations are measured on identical data.
 - Default tests are offline and pass.
 - Public history contains no private input, report, credential, or fabricated result.

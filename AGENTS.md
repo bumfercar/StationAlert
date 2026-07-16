@@ -2,8 +2,9 @@
 
 ## Mission
 
-Build a reproducible Python demonstration that uses RTZR Streaming STT to detect destination
-announcements and explains every alert or suppression with auditable evidence.
+Build a reproducible Python demonstration that uses RTZR Streaming STT to extract the current
+Line 7 station from announcements and explains every extraction or suppression with auditable
+evidence. Destination alerts are a secondary extension, not the primary result.
 
 The priorities are, in order:
 
@@ -48,19 +49,20 @@ preserve safe evidence, document the discrepancy, and do not guess.
 
 ## Architecture boundaries
 
-Keep audio conversion, RTZR transport, transcript parsing, destination detection, evaluation, and
-notification separate. Detection code must run without network access, and evaluation must call
-the production pipeline instead of reimplementing it.
+Keep audio conversion, RTZR transport, transcript parsing, station extraction, evaluation, and
+optional notification separate. Extraction code must run without network access, and evaluation
+must call the production pipeline instead of reimplementing it.
 
-A raw substring match must not directly trigger the domain-aware alert. Keep a measurable
-final-only exact-match baseline, then add announcement context and ordered Line 7 route state as
-separate ablations. Fuzzy matching is opt-in only.
+A raw substring match must not establish the current station. Keep a measurable final-only exact
+station-token baseline, accept explicit canonical/known-secondary-name/optional-`역` patterns, then add
+announcement context and ordered Line 7 route state as separate ablations. Fuzzy matching is
+opt-in only.
 
 ## Evaluation integrity
 
 - Create ground truth by listening, never by copying an STT hypothesis.
 - Define the evaluation unit before calculating a metric.
-- Use CER for text and precision/recall/F1 for destination decisions.
+- Use CER for text and precision/recall/F1 for current-station extraction decisions.
 - Keep failed samples and do not selectively rerun only poor cases.
 - Save configuration, segment id, raw response, normalized transcript, decision, timing, code
   revision, and run timestamp.

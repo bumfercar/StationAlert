@@ -68,7 +68,7 @@ def test_check_auth_never_prints_token(monkeypatch) -> None:
 
 
 def test_stream_file_help_makes_cost_and_privacy_controls_visible() -> None:
-    result = runner.invoke(app, ["stream-file", "--help"], terminal_width=160)
+    result = runner.invoke(app, ["stream-file", "--help"], terminal_width=220)
     output = _unstyle(result.output)
 
     assert result.exit_code == 0
@@ -79,6 +79,7 @@ def test_stream_file_help_makes_cost_and_privacy_controls_visible() -> None:
     assert "audio" in output
     assert "--target-station" in output
     assert "--keyword" in output
+    assert "--detect-station" in output
     assert "--output-file" in output
 
 
@@ -89,6 +90,18 @@ def test_streaming_keyword_parser_uses_explicit_or_default_score() -> None:
         ("먹골역", 2.5),
         ("상봉역", 2.0),
     ]
+
+
+def test_line7_keyword_boosts_use_equal_score_without_overriding_explicit_word() -> None:
+    explicit = cli_module._parse_keyword_boosts(("먹골:0.5",))
+
+    boosts = cli_module._merge_line7_keyword_boosts(explicit, score=1.0)
+
+    by_text = {boost.text: boost.score for boost in boosts}
+    assert by_text["먹골"] == 0.5
+    assert by_text["어린이대공원"] == 1.0
+    assert by_text["세종대"] == 1.0
+    assert len(by_text) == len(boosts)
 
 
 def test_batch_file_help_exposes_model_domain_and_private_output() -> None:
