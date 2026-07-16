@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from nextstop_stt.detection import canonical_station_name, contains_station
+from nextstop_stt.detection import canonical_station_name, contains_station_token
 from nextstop_stt.evaluation.metrics import (
     character_edit_distance,
     evaluate_character_error,
@@ -129,7 +129,7 @@ def evaluate_run(
             reference_characters = len(normalized_reference)
         station_match = None
         if truth.station.strip():
-            station_match = contains_station(
+            station_match = contains_station_token(
                 prediction.hypothesis_text,
                 canonical_station_name(truth.station),
             )

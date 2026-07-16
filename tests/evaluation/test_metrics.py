@@ -36,7 +36,7 @@ def test_cer_is_undefined_when_reference_has_no_characters() -> None:
 def test_station_match_requires_station_token_not_raw_substring() -> None:
     result = evaluate_station_matches(
         [
-            ("먹골", "이번 역은 먹골역입니다"),
+            ("먹골", "이번 역은 먹골."),
             ("상봉역", "경상봉역사 안에서 안내드립니다"),
         ]
     )

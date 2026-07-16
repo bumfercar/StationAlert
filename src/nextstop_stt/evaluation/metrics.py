@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from nextstop_stt.detection import canonical_station_name, contains_station, normalize_text
+from nextstop_stt.detection import (
+    canonical_station_name,
+    contains_station_token,
+    normalize_text,
+)
 
 
 @dataclass(frozen=True)
@@ -90,7 +94,7 @@ def evaluate_character_error(pairs: list[tuple[str, str]]) -> CharacterErrorResu
 def evaluate_station_matches(pairs: list[tuple[str, str]]) -> StationMatchResult:
     """Check whether each hypothesis contains its labeled station as an exact token."""
     match_count = sum(
-        contains_station(hypothesis, canonical_station_name(station))
+        contains_station_token(hypothesis, canonical_station_name(station))
         for station, hypothesis in pairs
     )
     return StationMatchResult(sample_count=len(pairs), match_count=match_count)

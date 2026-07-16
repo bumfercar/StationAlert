@@ -76,7 +76,7 @@ def canonical_station_name(station: str) -> str:
 
 
 def contains_station(text: str, target_station: str) -> bool:
-    """Match a station at a token start, including a separated `역` suffix."""
+    """Match a station with an explicit `역` suffix for the alert baseline."""
     normalized = normalize_text(text)
     tokens = normalized.split()
     target_base = target_station.removesuffix("역")
@@ -86,6 +86,14 @@ def contains_station(text: str, target_station: str) -> bool:
         if token == target_base and index + 1 < len(tokens) and tokens[index + 1].startswith("역"):
             return True
     return False
+
+
+def contains_station_token(text: str, target_station: str) -> bool:
+    """Match an exact station base token for STT recognition evaluation."""
+    normalized = normalize_text(text)
+    tokens = normalized.split()
+    target_base = target_station.removesuffix("역")
+    return any(token == target_base or token.startswith(target_station) for token in tokens)
 
 
 def normalize_text(text: str) -> str:

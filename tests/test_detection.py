@@ -7,6 +7,7 @@ from nextstop_stt.detection import (
     DestinationAlertDetector,
     canonical_station_name,
     contains_station,
+    contains_station_token,
 )
 from nextstop_stt.rtzr.models import StreamingTranscript
 
@@ -48,6 +49,13 @@ def test_station_match_does_not_accept_inner_substring() -> None:
 
 def test_station_suffix_may_be_separated_by_stt_spacing() -> None:
     assert contains_station("다음 역은 군자 역입니다", "군자역") is True
+
+
+def test_station_recognition_accepts_bare_exact_token_without_relaxing_alert() -> None:
+    text = "먹골견입니다. 내리실 문은 오른쪽입니다. 이제 먹골."
+
+    assert contains_station_token(text, "먹골역") is True
+    assert contains_station(text, "먹골역") is False
 
 
 @pytest.mark.parametrize("station", ["", " ", "어린이 대공원역"])
