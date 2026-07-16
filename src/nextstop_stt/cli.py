@@ -27,6 +27,7 @@ from nextstop_stt.evaluation.run_evaluation import (
     load_ground_truth,
     load_predictions,
 )
+from nextstop_stt.journey import JourneyStatus, JourneyTracker, JourneyUpdate
 from nextstop_stt.rtzr.auth import RTZRCredentials, RTZRTokenProvider
 from nextstop_stt.rtzr.batch_client import (
     BatchConfig,
@@ -414,6 +415,7 @@ def stream_file(
                 output_file=safe_output,
                 show_text=show_text,
                 detect_stations=detect_stations,
+                journey_tracker=None,
             )
         )
     except (AudioSourceError, RTZRError, ValueError) as error:
@@ -463,6 +465,113 @@ def _merge_line7_keyword_boosts(
     return boosts + corridor
 
 
+@app.command("journey-demo")
+def journey_demo(
+    source_file: Annotated[
+        Path | None,
+        typer.Option(help="Owned M4A/WAV recording; prompted when omitted."),
+    ] = None,
+    destination: Annotated[
+        str | None,
+        typer.Option(help="Station to exit at; prompted when omitted."),
+    ] = None,
+    start_seconds: Annotated[
+        float,
+        typer.Option(min=0.0, help="Replay start in seconds."),
+    ] = 0.0,
+    duration_seconds: Annotated[
+        float | None,
+        typer.Option(min=0.1, help="Required replay duration; prompted when omitted."),
+    ] = None,
+    domain: Annotated[StreamingDomain, typer.Option()] = StreamingDomain.MEETING,
+    keyword_score: Annotated[
+        float,
+        typer.Option(min=-5.0, max=5.0, help="Equal score for the demo route vocabulary."),
+    ] = 1.0,
+    output_file: Annotated[
+        Path,
+        typer.Option(help="Private JSON evidence under results/private/."),
+    ] = Path("results/private/journey-demo.json"),
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", help="Start the paid RTZR replay without confirmation."),
+    ] = False,
+) -> None:
+    """Interactively replay a recording and show the route to an exit station."""
+    typer.echo("=" * 64)
+    typer.echo(" NextStop STT | 지하철 현재역 인식 및 하차 안내")
+    typer.echo(" 파일을 실시간 속도로 전송해 마이크 입력을 재현합니다.")
+    typer.echo("=" * 64)
+
+    if source_file is None:
+        source_file = Path(typer.prompt("녹음 파일 경로를 입력해주세요"))
+    if not source_file.is_file():
+        typer.echo("실행 실패: 녹음 파일을 찾을 수 없습니다.", err=True)
+        raise typer.Exit(code=1)
+
+    if destination is None:
+        destination = typer.prompt("하차하실 역명을 정확히 입력해주세요")
+    try:
+        tracker = JourneyTracker(destination)
+        safe_output = _private_result_path(output_file)
+        if duration_seconds is None:
+            duration_seconds = typer.prompt(
+                "실시간으로 재생할 길이(초)를 입력해주세요",
+                default=20.0,
+                type=float,
+            )
+        if duration_seconds <= 0:
+            raise ValueError("duration must be positive")
+        keywords = _merge_line7_keyword_boosts((), score=keyword_score)
+    except ValueError as error:
+        typer.echo(f"실행 실패: {error}", err=True)
+        raise typer.Exit(code=1) from None
+
+    typer.echo(f"[입력] 파일: {source_file.name}")
+    typer.echo(f"[목적지] {tracker.destination}")
+    typer.echo(
+        f"[RTZR 설정] model=sommers_ko domain={domain.value} "
+        f"Line7 keyword score={keyword_score:.1f}"
+    )
+    typer.echo(
+        f"[재생 구간] {start_seconds:.3f}초부터 {duration_seconds:.3f}초 | "
+        "실제 시간만큼 소요"
+    )
+    if not yes and not typer.confirm("RTZR Streaming 인식을 시작할까요?"):
+        typer.echo("사용자가 실행을 취소했습니다.")
+        raise typer.Exit()
+
+    typer.echo("[연결] RTZR Streaming STT 연결 및 실시간 재생 시작")
+    try:
+        partial, final, _, stations, candidates = asyncio.run(
+            _stream_file(
+                source_file=source_file,
+                duration_ms=round(duration_seconds * 1_000),
+                start_ms=round(start_seconds * 1_000),
+                sample_rate=16_000,
+                domain=domain,
+                model=StreamingModel.SOMMERS_KO,
+                language=None,
+                target_station=None,
+                keywords=keywords,
+                output_file=safe_output,
+                show_text=False,
+                detect_stations=True,
+                journey_tracker=tracker,
+            )
+        )
+    except (AudioSourceError, RTZRError, ValueError) as error:
+        typer.echo(f"실행 실패: {error}", err=True)
+        raise typer.Exit(code=1) from None
+
+    typer.echo(
+        "[완료] "
+        f"partial={partial}, final={final}, "
+        f"현재역={stations}, 보류후보={candidates}"
+    )
+    typer.echo(f"[근거 저장] {safe_output.as_posix()}")
+
+
 async def _stream_file(
     *,
     source_file: Path,
@@ -477,6 +586,7 @@ async def _stream_file(
     output_file: Path | None,
     show_text: bool,
     detect_stations: bool,
+    journey_tracker: JourneyTracker | None,
 ) -> tuple[int, int, int, int, int]:
     credentials = RTZRCredentials.from_env()
     provider = RTZRTokenProvider(credentials)
@@ -507,6 +617,7 @@ async def _stream_file(
     response_records = []
     decision_records = []
     station_records = []
+    journey_records = []
     session_started_at = time.monotonic()
     try:
         async for response in client.transcribe(source.frames()):
@@ -522,12 +633,32 @@ async def _stream_file(
             else:
                 partial_count += 1
             if detect_stations and response.final:
-                for mention in extract_line7_station_mentions(response.primary_text):
+                mentions = extract_line7_station_mentions(response.primary_text)
+                strong_mentions = tuple(
+                    mention for mention in mentions if mention.is_current_station_evidence
+                )
+                if journey_tracker is not None and not strong_mentions:
+                    state = "역명 후보 보류" if mentions else "역명 근거 없음"
+                    typer.echo(f"[인식] final seq={response.seq} | {state}")
+                for mention in mentions:
                     if mention.is_current_station_evidence:
-                        typer.echo(
-                            f"CURRENT_STATION: {mention.station} "
-                            f"reason={mention.reason.value} seq={response.seq}"
-                        )
+                        if journey_tracker is None:
+                            typer.echo(
+                                f"CURRENT_STATION: {mention.station} "
+                                f"reason={mention.reason.value} seq={response.seq}"
+                            )
+                        else:
+                            update = journey_tracker.observe(mention.station)
+                            _render_journey_update(update, seq=response.seq)
+                            journey_records.append(
+                                {
+                                    "transcript_seq": response.seq,
+                                    "station": update.station,
+                                    "destination": update.destination,
+                                    "stations_remaining": update.stations_remaining,
+                                    "status": update.status.value,
+                                }
+                            )
                         station_count += 1
                     else:
                         candidate_count += 1
@@ -579,9 +710,35 @@ async def _stream_file(
                 "responses": response_records,
                 "decisions": decision_records,
                 "station_detections": station_records,
+                "journey": journey_records,
             },
         )
     return partial_count, final_count, alert_count, station_count, candidate_count
+
+
+def _render_journey_update(update: JourneyUpdate, *, seq: int) -> None:
+    if update.status is JourneyStatus.EN_ROUTE:
+        typer.echo(
+            f"[현재역] {update.station} | 목적지 {update.destination}까지 "
+            f"{update.stations_remaining}정거장 | final seq={seq}"
+        )
+    elif update.status is JourneyStatus.PREPARE_TO_EXIT:
+        typer.echo(
+            f"[하차 준비] 현재 {update.station} | 다음 역 {update.destination}에서 "
+            f"내리세요 | final seq={seq}"
+        )
+    elif update.status is JourneyStatus.ARRIVED:
+        typer.echo(f"[도착] {update.destination}역입니다. 하차하세요 | final seq={seq}")
+    elif update.status is JourneyStatus.PASSED_DESTINATION:
+        typer.echo(
+            f"[주의] 목적지 {update.destination}을 지나 {update.station}역입니다 "
+            f"| final seq={seq}"
+        )
+    elif update.status is JourneyStatus.OUT_OF_ORDER:
+        typer.echo(
+            f"[보류] {update.station}역은 진행 순서와 맞지 않아 위치를 갱신하지 않습니다 "
+            f"| final seq={seq}"
+        )
 
 
 if __name__ == "__main__":

@@ -83,6 +83,53 @@ def test_stream_file_help_makes_cost_and_privacy_controls_visible() -> None:
     assert "--output-file" in output
 
 
+def test_journey_demo_help_exposes_user_inputs_and_safe_defaults() -> None:
+    result = runner.invoke(app, ["journey-demo", "--help"], terminal_width=220)
+    output = _unstyle(result.output)
+
+    assert result.exit_code == 0
+    assert "--source-file" in output
+    assert "--destination" in output
+    assert "--start-seconds" in output
+    assert "--duration-seconds" in output
+    assert "--keyword-score" in output
+    assert "--output-file" in output
+
+
+def test_journey_demo_shows_prepare_and_arrival_flow(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "owned.m4a"
+    source.write_bytes(b"private audio placeholder")
+    (tmp_path / "results" / "private").mkdir(parents=True)
+
+    async def fake_stream_file(**kwargs):
+        tracker = kwargs["journey_tracker"]
+        cli_module._render_journey_update(tracker.observe("군자"), seq=1)
+        cli_module._render_journey_update(tracker.observe("어린이대공원"), seq=2)
+        return 0, 2, 0, 2, 0
+
+    monkeypatch.setattr(cli_module, "_stream_file", fake_stream_file)
+
+    result = runner.invoke(
+        app,
+        [
+            "journey-demo",
+            "--source-file",
+            str(source),
+            "--destination",
+            "어린이대공원",
+            "--duration-seconds",
+            "20",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "[하차 준비]" in result.output
+    assert "[도착] 어린이대공원역" in result.output
+    assert "현재역=2" in result.output
+
+
 def test_streaming_keyword_parser_uses_explicit_or_default_score() -> None:
     boosts = cli_module._parse_keyword_boosts(("먹골역:2.5", "상봉역"))
 

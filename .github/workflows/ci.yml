@@ -69,7 +69,32 @@ jobs:
         run: uv run --frozen pytest tests/test_cli.py -k "not help"
 
       - name: Run domain unit tests
-        run: uv run --frozen pytest tests/test_detection.py
+        run: >-
+          uv run --frozen pytest
+          tests/test_detection.py
+          tests/test_journey.py
+          tests/test_station_extraction.py
+
+      - name: Verify macOS and Linux demo script syntax
+        if: runner.os != 'Windows'
+        shell: sh
+        run: sh -n scripts/run_demo.sh
+
+      - name: Verify Windows demo script syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "scripts/run_demo.ps1",
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
 
       - name: Run Ruff
         run: uv run --frozen ruff check .

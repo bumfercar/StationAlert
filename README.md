@@ -48,7 +48,52 @@ $env:RTZR_CLIENT_SECRET="..."
 uv run nextstop check-auth
 ```
 
-## 현재역 추출 데모
+## 운영체제별 한 번 실행
+
+`.env.example`을 `.env`로 복사하고 credential을 입력한 뒤 실행합니다. 스크립트가
+프로젝트 위치 이동, `.env` 로드, frozen dependency 설치, 대화형 CLI 실행을 담당합니다.
+
+| 운영체제 | 실행 명령 |
+| --- | --- |
+| macOS | `./scripts/run_demo.sh` |
+| Linux | `./scripts/run_demo.sh` |
+| Windows PowerShell | `powershell -ExecutionPolicy Bypass -File .\scripts\run_demo.ps1` |
+
+CLI는 다음 순서로 질문합니다.
+
+```text
+NextStop STT | 지하철 현재역 인식 및 하차 안내
+녹음 파일 경로를 입력해주세요:
+하차하실 역명을 정확히 입력해주세요:
+실시간으로 재생할 길이(초)를 입력해주세요 [20.0]:
+RTZR Streaming 인식을 시작할까요? [y/N]:
+```
+
+현재 비공개 녹음의 어린이대공원 20초를 바로 확인하려면 다음처럼 인자를 전달합니다.
+
+```bash
+./scripts/run_demo.sh --source-file ../subwayaudio.m4a --destination 어린이대공원 --start-seconds 1124 --duration-seconds 20 --yes
+```
+
+Windows에서도 같은 option을 `run_demo.ps1` 뒤에 붙이면 됩니다.
+
+실제 end-to-end 검증에서는 다음 흐름이 출력됐습니다.
+
+```text
+[연결] RTZR Streaming STT 연결 및 실시간 재생 시작
+[인식] final seq=1 | 역명 근거 없음
+[도착] 어린이대공원역입니다. 하차하세요 | final seq=2
+[인식] final seq=3 | 역명 후보 보류
+[완료] partial=12, final=5, 현재역=1, 보류후보=1
+[근거 저장] results/private/journey-demo.json
+```
+
+한 정거장 전 역을 강한 패턴으로 인식하면 `[하차 준비]`를 출력하도록 구현했습니다.
+현재 녹음의 군자 추정 구간에서는 RTZR가 역명을 검출하지 못해 실제 `[하차 준비]`는
+발생하지 않았고, 이 한계는 그대로 남겼습니다. 목적지역 자체는 실제 녹음에서
+`[도착]`까지 확인했습니다.
+
+## 현재역 추출 상세 명령
 
 직접 녹음했거나 사용 권한이 있는 파일을 지정합니다. `duration-ms`를 필수로 두어 실수로
 긴 유료 호출을 실행하지 않도록 했습니다.
