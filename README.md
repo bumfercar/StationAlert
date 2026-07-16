@@ -42,10 +42,10 @@ flowchart LR
 
 ## 처음 실행하기
 
-### 1. 고정 음성 배치
+### 1. 고정 음성 확인
 
-`subwayaudio.m4a`는 승객 음성과 개인정보 보호를 위해 GitHub에 올리지 않습니다. 별도로
-전달된 파일을 저장소 루트에 두면 실행 스크립트가 자동으로 선택합니다.
+데모 입력인 `subwayaudio.m4a`가 저장소에 포함되어 있습니다. 저장소를 clone하면 별도
+업로드나 경로 입력 없이 실행 스크립트가 이 파일을 자동으로 선택합니다.
 
 ```text
 StationAlert/
@@ -54,7 +54,7 @@ StationAlert/
 └── scripts/
 ```
 
-실행 중에는 음성 경로를 입력하지 않습니다.
+실행 중에는 음성 파일이나 경로를 입력하지 않습니다.
 
 ### 2. 운영체제별 도구 설치
 
@@ -177,7 +177,7 @@ RTZR 연결과 지하철 판단 로직을 분리해, 유료 API를 호출하지 
 | `uv를 설치해주세요` | `uv --version` 확인 후 터미널 다시 실행 |
 | `FFmpeg를 설치해주세요` | `ffmpeg -version`, `ffprobe -version`과 PATH 확인 |
 | credential 오류 | `.env` 파일명과 `RTZR_CLIENT_ID`, `RTZR_CLIENT_SECRET` 값 확인 |
-| 음성 파일을 찾지 못함 | `StationAlert` 루트에 파일명이 정확히 `subwayaudio.m4a`인지 확인 |
+| 음성 파일을 찾지 못함 | `git restore subwayaudio.m4a`로 저장소의 고정 입력 복구 |
 | 실행이 오래 걸림 | 오류가 아니라 원본을 실시간 속도로 보내는 동작이며 전체 약 19분 39초 소요 |
 | 화면에 역이 추가되지 않음 | 연결 오류가 아니라 RTZR final에서 역명 근거를 만들지 못한 구간일 수 있음 |
 | 사용량 초과·429 | RTZR Developers의 남은 사용량과 동시 channel 제한 확인 |
@@ -201,7 +201,7 @@ Windows에서 Python 3.11, FFmpeg, CLI와 도메인 로직을 검증합니다.
 - 공릉·중화 등 RTZR가 역명 token을 만들지 못한 구간도 있습니다.
 - domain과 score 비교는 한 구간의 결과이므로 전체 노선 최적값으로 일반화하지 않습니다.
 - 음성만 사용하므로 방송 사이의 실제 위치는 알 수 없습니다.
-- `.env`, 원본 음성, 전사, raw RTZR 결과와 비공개 보고서는 Git에 포함하지 않습니다.
+- `.env`, 전사, raw RTZR 결과와 비공개 보고서는 Git에 포함하지 않습니다.
 
 ## 참고한 공식 문서
 

@@ -26,6 +26,7 @@ private_audio/
 results/private/
 reports/private/
 *.m4a
+!subwayaudio.m4a
 *.wav
 *.mp3
 *.flac
