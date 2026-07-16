@@ -1,4 +1,4 @@
-# NextStop STT
+# StationAlert
 
 [![Cross-platform CI](https://github.com/bumfercar/StationAlert/actions/workflows/ci.yml/badge.svg)](https://github.com/bumfercar/StationAlert/actions/workflows/ci.yml)
 
