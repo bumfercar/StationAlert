@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
   "httpx>=0.28,<1",
   "pydantic>=2.11,<3",
+  "rich>=14,<16",
   "typer>=0.12,<1",
   "websockets>=15,<17",
 ]

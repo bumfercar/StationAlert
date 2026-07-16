@@ -37,6 +37,24 @@ def test_bare_station_is_visible_but_not_current_station_evidence() -> None:
     assert mentions[0].is_current_station_evidence is False
 
 
+def test_bare_station_with_door_context_is_current_station_evidence() -> None:
+    mentions = extract_line7_station_mentions(
+        "먹골견입니다 리신 분은 오른쪽입니다 이제 먹골"
+    )
+
+    assert mentions[0].station == "먹골"
+    assert mentions[0].reason is StationMatchReason.CANONICAL_ANNOUNCEMENT_CONTEXT
+    assert mentions[0].is_current_station_evidence is True
+
+
+def test_unrelated_bare_keyword_hallucination_stays_weak() -> None:
+    mentions = extract_line7_station_mentions("미리 신문은 오류 입니다 지원금 중화 어")
+
+    assert mentions[0].station == "중화"
+    assert mentions[0].reason is StationMatchReason.CANONICAL_TOKEN
+    assert mentions[0].is_current_station_evidence is False
+
+
 def test_does_not_fuzzy_match_station_misrecognition() -> None:
     assert extract_line7_station_mentions("어린이비복원 세동제 역") == ()
 

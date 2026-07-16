@@ -14,6 +14,7 @@ class StationMatchReason(StrEnum):
     CANONICAL_SUFFIX = "canonical_with_station_suffix"
     CANONICAL_ALIAS_SUFFIX = "canonical_with_alias_and_station_suffix"
     CANONICAL_ALIAS = "canonical_with_known_alias"
+    CANONICAL_ANNOUNCEMENT_CONTEXT = "canonical_with_announcement_context"
     CANONICAL_TOKEN = "canonical_token_only"
 
 
@@ -54,6 +55,18 @@ LINE_7_DEMO_STATIONS = (
     StationDefinition("어린이대공원", aliases=("세종대",)),
 )
 
+_CURRENT_STATION_CONTEXT = frozenset(
+    {
+        "이번",
+        "내리실",
+        "출입문",
+        "오른쪽",
+        "왼쪽",
+        "door",
+        "doors",
+    }
+)
+
 
 def line7_keyword_vocabulary() -> tuple[str, ...]:
     """Return equal-priority canonical and secondary names for the recorded corridor."""
@@ -67,9 +80,18 @@ def line7_keyword_vocabulary() -> tuple[str, ...]:
 def extract_line7_station_mentions(text: str) -> tuple[StationMention, ...]:
     """Extract exact station tokens and alias-aware station phrases from one final result."""
     tokens = normalize_text(text).split()
+    has_announcement_context = any(
+        token.casefold().startswith(context)
+        for token in tokens
+        for context in _CURRENT_STATION_CONTEXT
+    )
     matches = []
     for station in LINE_7_DEMO_STATIONS:
-        reason = _strongest_reason(tokens, station)
+        reason = _strongest_reason(
+            tokens,
+            station,
+            has_announcement_context=has_announcement_context,
+        )
         if reason is not None:
             matches.append(StationMention(station=station.name, reason=reason))
     return tuple(matches)
@@ -78,6 +100,8 @@ def extract_line7_station_mentions(text: str) -> tuple[StationMention, ...]:
 def _strongest_reason(
     tokens: list[str],
     station: StationDefinition,
+    *,
+    has_announcement_context: bool,
 ) -> StationMatchReason | None:
     fallback = None
     canonical_with_suffix = f"{station.name}역"
@@ -92,5 +116,9 @@ def _strongest_reason(
             if index + 2 < len(tokens) and tokens[index + 2].startswith("역"):
                 return StationMatchReason.CANONICAL_ALIAS_SUFFIX
             return StationMatchReason.CANONICAL_ALIAS
-        fallback = StationMatchReason.CANONICAL_TOKEN
+        fallback = (
+            StationMatchReason.CANONICAL_ANNOUNCEMENT_CONTEXT
+            if has_announcement_context
+            else StationMatchReason.CANONICAL_TOKEN
+        )
     return fallback

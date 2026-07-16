@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from rich.console import Console
+from rich.status import Status
+from rich.text import Text
 
 from nextstop_stt import __version__
 from nextstop_stt.audio.errors import AudioSourceError
@@ -552,6 +555,7 @@ def journey_demo(
         raise typer.Exit()
 
     typer.echo("[연결] RTZR Streaming STT 연결 및 실시간 재생 시작")
+    typer.echo("[역 인식 기록] 새 역이 확인되면 아래에 한 줄씩 추가됩니다.")
     try:
         partial, final, _, stations, candidates = asyncio.run(
             _stream_file(
@@ -576,9 +580,13 @@ def journey_demo(
 
     typer.echo(
         "[완료] "
-        f"partial={partial}, final={final}, "
-        f"현재역={stations}, 보류후보={candidates}"
+        f"인식 역={stations}개 | RTZR partial={partial}, final={final} "
+        f"| 보류 후보={candidates}개"
     )
+    if stations == 0:
+        typer.echo(
+            "[결과] 이 구간의 RTZR final 응답에서 확정 가능한 역명을 찾지 못했습니다."
+        )
     typer.echo(f"[근거 저장] {safe_output.as_posix()}")
 
 
@@ -629,15 +637,14 @@ async def _stream_file(
     station_records = []
     journey_records = []
     session_started_at = time.monotonic()
-    progress_task = None
+    replay_display = None
     if journey_tracker is not None:
-        progress_task = asyncio.create_task(
-            _render_replay_progress(
-                duration_ms=duration_ms,
-                start_ms=start_ms,
-                started_at=session_started_at,
-            )
+        replay_display = _ReplayDisplay(
+            duration_ms=duration_ms,
+            start_ms=start_ms,
+            started_at=session_started_at,
         )
+        replay_display.start()
     try:
         async for response in client.transcribe(source.frames()):
             received_elapsed_ms = round((time.monotonic() - session_started_at) * 1_000)
@@ -653,12 +660,6 @@ async def _stream_file(
                 partial_count += 1
             if detect_stations and response.final:
                 mentions = extract_line7_station_mentions(response.primary_text)
-                strong_mentions = tuple(
-                    mention for mention in mentions if mention.is_current_station_evidence
-                )
-                if journey_tracker is not None and not strong_mentions:
-                    state = "역명 후보 보류" if mentions else "역명 근거 없음"
-                    typer.echo(f"[인식] final seq={response.seq} | {state}")
                 for mention in mentions:
                     if mention.is_current_station_evidence:
                         if journey_tracker is None:
@@ -668,7 +669,15 @@ async def _stream_file(
                             )
                         else:
                             update = journey_tracker.observe(mention.station)
-                            _render_journey_update(update, seq=response.seq)
+                            accepted = update.status not in {
+                                JourneyStatus.DUPLICATE,
+                                JourneyStatus.OUT_OF_ORDER,
+                            }
+                            if accepted and replay_display is not None:
+                                replay_display.add_station(
+                                    update,
+                                    source_time_ms=start_ms + response.start_at,
+                                )
                             journey_records.append(
                                 {
                                     "transcript_seq": response.seq,
@@ -677,9 +686,13 @@ async def _stream_file(
                                     "stations_remaining": update.stations_remaining,
                                     "status": update.status.value,
                                     "direction": update.direction.value,
+                                    "source_time_ms": start_ms + response.start_at,
                                 }
                             )
-                        station_count += 1
+                            if accepted:
+                                station_count += 1
+                        if journey_tracker is None:
+                            station_count += 1
                     else:
                         candidate_count += 1
                     station_records.append(
@@ -690,6 +703,7 @@ async def _stream_file(
                             "is_current_station_evidence": (
                                 mention.is_current_station_evidence
                             ),
+                            "source_time_ms": start_ms + response.start_at,
                         }
                     )
             if detector is not None:
@@ -709,9 +723,8 @@ async def _stream_file(
                 state = "FINAL" if response.final else "PARTIAL"
                 typer.echo(f"[{state}] {response.primary_text}")
     finally:
-        if progress_task is not None:
-            progress_task.cancel()
-            await asyncio.gather(progress_task, return_exceptions=True)
+        if replay_display is not None:
+            await replay_display.stop()
         await provider.aclose()
     if output_file is not None:
         _write_private_json(
@@ -739,38 +752,6 @@ async def _stream_file(
     return partial_count, final_count, alert_count, station_count, candidate_count
 
 
-def _render_journey_update(update: JourneyUpdate, *, seq: int) -> None:
-    if update.status is JourneyStatus.EN_ROUTE:
-        direction = _direction_text(update.direction)
-        typer.echo(
-            f"[현재역] {update.station}역 | 이동 방향: {direction} | final seq={seq}"
-        )
-        typer.echo(
-            f"[이동 안내] 목적지 {update.destination}까지 "
-            f"{update.stations_remaining}정거장"
-        )
-    elif update.status is JourneyStatus.PREPARE_TO_EXIT:
-        typer.echo(
-            f"[현재역] {update.station}역 | 이동 방향: "
-            f"{_direction_text(update.direction)} | final seq={seq}"
-        )
-        typer.echo(
-            f"[하차 준비] 다음 역 {update.destination}에서 내리세요"
-        )
-    elif update.status is JourneyStatus.ARRIVED:
-        typer.echo(f"[도착] {update.destination}역입니다. 하차하세요 | final seq={seq}")
-    elif update.status is JourneyStatus.PASSED_DESTINATION:
-        typer.echo(
-            f"[주의] 목적지 {update.destination}을 지나 {update.station}역입니다 "
-            f"| final seq={seq}"
-        )
-    elif update.status is JourneyStatus.OUT_OF_ORDER:
-        typer.echo(
-            f"[보류] {update.station}역은 진행 순서와 맞지 않아 위치를 갱신하지 않습니다 "
-            f"| final seq={seq}"
-        )
-
-
 def _direction_text(direction: TravelDirection) -> str:
     if direction is TravelDirection.TOWARD_CHILDRENS_GRAND_PARK:
         return "어린이대공원 방향"
@@ -779,19 +760,95 @@ def _direction_text(direction: TravelDirection) -> str:
     return "판별 중(다음 역 인식 대기)"
 
 
-async def _render_replay_progress(
-    *,
-    duration_ms: int,
-    start_ms: int,
-    started_at: float,
-) -> None:
-    while True:
-        elapsed_ms = min(round((time.monotonic() - started_at) * 1_000), duration_ms)
-        typer.echo(
-            f"[재생] {_clock_text(elapsed_ms)} / {_clock_text(duration_ms)} "
-            f"| 원본 {_clock_text(start_ms + elapsed_ms)} | RTZR 인식 중"
+class _ReplayDisplay:
+    """Keep one animated travel line and append only newly accepted stations."""
+
+    def __init__(
+        self,
+        *,
+        duration_ms: int,
+        start_ms: int,
+        started_at: float,
+        console: Console | None = None,
+    ) -> None:
+        self._duration_ms = duration_ms
+        self._start_ms = start_ms
+        self._started_at = started_at
+        self._console = console or Console()
+        self._current_station: str | None = None
+        self._station_number = 0
+        self._task: asyncio.Task[None] | None = None
+        self._status = Status(
+            self._status_text(0),
+            console=self._console,
+            spinner="arc",
+            refresh_per_second=8,
         )
-        await asyncio.sleep(10)
+
+    def start(self) -> None:
+        self._status.start()
+        self._task = asyncio.create_task(self._refresh())
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
+        self._status.stop()
+
+    def add_station(self, update: JourneyUpdate, *, source_time_ms: int) -> None:
+        self._station_number += 1
+        self._current_station = update.station
+        self._console.print(
+            _station_row(
+                self._station_number,
+                update,
+                source_time_ms=source_time_ms,
+            ),
+            markup=False,
+        )
+
+    async def _refresh(self) -> None:
+        while True:
+            elapsed_ms = min(
+                round((time.monotonic() - self._started_at) * 1_000),
+                self._duration_ms,
+            )
+            self._status.update(self._status_text(elapsed_ms))
+            await asyncio.sleep(0.25)
+
+    def _status_text(self, elapsed_ms: int) -> Text:
+        position = (
+            f"현재 {self._current_station}역"
+            if self._current_station is not None
+            else "첫 역 방송 대기"
+        )
+        return Text(
+            f"이동 중 · {position} · "
+            f"{_clock_text(elapsed_ms)} / {_clock_text(self._duration_ms)} · "
+            f"원본 {_clock_text(self._start_ms + elapsed_ms)}",
+            style="cyan",
+        )
+
+
+def _journey_summary(update: JourneyUpdate) -> str:
+    if update.status is JourneyStatus.PREPARE_TO_EXIT:
+        return f"다음 역 {update.destination} · 하차 준비"
+    if update.status is JourneyStatus.ARRIVED:
+        return "목적지 도착 · 하차"
+    if update.status is JourneyStatus.PASSED_DESTINATION:
+        return f"목적지 {update.destination} 통과"
+    return (
+        f"{_direction_text(update.direction)}"
+        f" · 목적지까지 {update.stations_remaining}정거장"
+    )
+
+
+def _station_row(number: int, update: JourneyUpdate, *, source_time_ms: int) -> str:
+    return (
+        f"{number:02d}. {update.station}역"
+        f" | 원본 {_clock_text(source_time_ms)}"
+        f" | {_journey_summary(update)}"
+    )
 
 
 def _clock_text(milliseconds: int) -> str:

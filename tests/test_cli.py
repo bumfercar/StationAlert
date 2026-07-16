@@ -106,9 +106,13 @@ def test_journey_demo_shows_prepare_and_arrival_flow(tmp_path, monkeypatch) -> N
     async def fake_stream_file(**kwargs):
         captured.update(kwargs)
         tracker = kwargs["journey_tracker"]
-        cli_module._render_journey_update(tracker.observe("중곡"), seq=1)
-        cli_module._render_journey_update(tracker.observe("군자"), seq=2)
-        cli_module._render_journey_update(tracker.observe("어린이대공원"), seq=3)
+        for number, station in enumerate(("중곡", "군자", "어린이대공원"), start=1):
+            row = cli_module._station_row(
+                number,
+                tracker.observe(station),
+                source_time_ms=number * 1_000,
+            )
+            cli_module.typer.echo(row)
         return 0, 3, 0, 3, 0
 
     monkeypatch.setattr(cli_module, "_stream_file", fake_stream_file)
@@ -127,9 +131,10 @@ def test_journey_demo_shows_prepare_and_arrival_flow(tmp_path, monkeypatch) -> N
     )
 
     assert result.exit_code == 0
-    assert "[하차 준비]" in result.output
-    assert "[도착] 어린이대공원역" in result.output
-    assert "현재역=3" in result.output
+    assert "하차 준비" in result.output
+    assert "어린이대공원역" in result.output
+    assert "목적지 도착" in result.output
+    assert "인식 역=3개" in result.output
     assert captured["duration_ms"] == 60_000
 
 
@@ -158,6 +163,20 @@ def test_replay_clock_formats_short_and_long_audio() -> None:
     assert cli_module._clock_text(20_000) == "00:20"
     assert cli_module._clock_text(1_179_456) == "19:39"
     assert cli_module._clock_text(3_661_000) == "01:01:01"
+
+
+def test_journey_summary_keeps_station_list_compact() -> None:
+    tracker = cli_module.JourneyTracker("어린이대공원")
+
+    first = tracker.observe("먹골")
+    second = tracker.observe("중화")
+
+    assert cli_module._journey_summary(first) == (
+        "판별 중(다음 역 인식 대기) · 목적지까지 8정거장"
+    )
+    assert cli_module._journey_summary(second) == (
+        "어린이대공원 방향 · 목적지까지 7정거장"
+    )
 
 
 def test_batch_file_help_exposes_model_domain_and_private_output() -> None:
