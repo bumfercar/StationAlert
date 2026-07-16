@@ -60,6 +60,46 @@ def test_does_not_fuzzy_match_station_misrecognition() -> None:
     assert extract_line7_station_mentions("어린이비복원 세동제 역") == ()
 
 
+def test_contextual_recovery_is_opt_in() -> None:
+    text = "이번 저는 범볼 범볼 견입니다 이제 저는 마 마콜"
+
+    assert extract_line7_station_mentions(text) == ()
+
+
+def test_recovers_unique_phonetic_station_inside_announcement_context() -> None:
+    mentions = extract_line7_station_mentions(
+        "이번 저는 범볼 범볼 견입니다 이제 저는 마 마콜",
+        allow_contextual_recovery=True,
+    )
+
+    assert len(mentions) == 1
+    assert mentions[0].station == "먹골"
+    assert mentions[0].reason is StationMatchReason.CONTEXTUAL_PHONETIC_RECOVERY
+    assert mentions[0].observed_token == "마콜"
+    assert mentions[0].phonetic_distance == 0.333
+    assert mentions[0].is_current_station_evidence is True
+
+
+def test_does_not_recover_phonetic_station_without_announcement_context() -> None:
+    assert (
+        extract_line7_station_mentions(
+            "친구가 마콜이라고 말했다",
+            allow_contextual_recovery=True,
+        )
+        == ()
+    )
+
+
+def test_contextual_recovery_keeps_distant_misrecognition_rejected() -> None:
+    assert (
+        extract_line7_station_mentions(
+            "이번 역은 어린이비복원 세동제 역",
+            allow_contextual_recovery=True,
+        )
+        == ()
+    )
+
+
 def test_does_not_accept_inner_substring() -> None:
     assert extract_line7_station_mentions("경상봉역사 안에서 안내드립니다") == ()
 

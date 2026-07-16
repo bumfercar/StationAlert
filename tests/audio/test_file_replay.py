@@ -8,7 +8,11 @@ from pathlib import Path
 import pytest
 
 from nextstop_stt.audio.errors import AudioSourceError
-from nextstop_stt.audio.file_replay import FFmpegPCMSource, probe_audio_duration_ms
+from nextstop_stt.audio.file_replay import (
+    AudioPreprocessPreset,
+    FFmpegPCMSource,
+    probe_audio_duration_ms,
+)
 
 
 def test_source_rejects_missing_file_without_exposing_path(tmp_path: Path) -> None:
@@ -37,6 +41,33 @@ def test_command_requests_headerless_mono_linear16(tmp_path: Path) -> None:
     assert command[command.index("-ar") : command.index("-ar") + 2] == ("-ar", "16000")
     assert command[command.index("-ss") : command.index("-ss") + 2] == ("-ss", "1.500")
     assert command[command.index("-t") : command.index("-t") + 2] == ("-t", "2.000")
+
+
+def test_subway_preprocess_adds_auditable_ffmpeg_filter(tmp_path: Path) -> None:
+    audio_path = _write_silence(tmp_path / "sample.wav")
+    source = FFmpegPCMSource(
+        audio_path,
+        sample_rate=16_000,
+        preprocess=AudioPreprocessPreset.SUBWAY_SPEECH_V1,
+    )
+
+    command = source._command("ffmpeg")
+
+    assert "-af" in command
+    assert source.preprocess.filter_graph in command
+    assert "highpass=f=100" in source.preprocess.filter_graph
+    assert "afftdn=nr=8" in source.preprocess.filter_graph
+
+
+def test_rumble_cut_keeps_filter_chain_minimal(tmp_path: Path) -> None:
+    audio_path = _write_silence(tmp_path / "sample.wav")
+    source = FFmpegPCMSource(
+        audio_path,
+        sample_rate=16_000,
+        preprocess=AudioPreprocessPreset.SUBWAY_RUMBLE_CUT_V1,
+    )
+
+    assert source.preprocess.filter_graph == "highpass=f=100:p=2"
 
 
 def test_probe_audio_duration_returns_milliseconds_without_shell(tmp_path: Path) -> None:

@@ -78,6 +78,8 @@ def test_stream_file_help_makes_cost_and_privacy_controls_visible() -> None:
 
     assert result.exit_code == 0
     assert "--duration-ms" in output
+    assert "--preprocess" in output
+    assert "--recover" in output
     assert "required" in output.lower()
     assert "--show-text" in output
     assert "passenger" in output
@@ -99,6 +101,7 @@ def test_journey_demo_help_exposes_user_inputs_and_safe_defaults() -> None:
     assert "--duration-seconds" in output
     assert "--keyword-score" in output
     assert "--destination-score" in output
+    assert "--recover" in output
     assert "--show-text" in output
     assert "--output-file" in output
 
@@ -144,6 +147,8 @@ def test_journey_demo_shows_prepare_and_arrival_flow(tmp_path, monkeypatch) -> N
     assert "인식 역=3개" in result.output
     assert "공릉 → 태릉입구 → 먹골" in result.output
     assert captured["duration_ms"] == 60_000
+    assert captured["preprocess"] is cli_module.AudioPreprocessPreset.NONE
+    assert captured["contextual_recovery"] is False
     keyword_scores = {boost.text: boost.score for boost in captured["keywords"]}
     assert keyword_scores["어린이대공원"] == 2.0
     assert keyword_scores["세종대"] == 2.0
@@ -297,6 +302,29 @@ def test_interrupted_stream_saves_received_responses(tmp_path, monkeypatch) -> N
     assert artifact["run"]["status"] == "interrupted"
     assert artifact["summary"]["final_count"] == 1
     assert len(artifact["responses"]) == 1
+    assert artifact["run"]["station_extraction"] == {
+        "contextual_recovery": False
+    }
+
+
+def test_station_row_discloses_contextual_phonetic_recovery() -> None:
+    update = cli_module.JourneyTracker("어린이대공원").observe("먹골")
+    mention = cli_module.StationMention(
+        station="먹골",
+        reason=cli_module.StationMatchReason.CONTEXTUAL_PHONETIC_RECOVERY,
+        observed_token="마콜",
+        phonetic_distance=0.333,
+    )
+
+    row = cli_module._station_row(
+        1,
+        update,
+        source_time_ms=265_000,
+        mention=mention,
+    )
+
+    assert "문맥 복원 마콜→먹골" in row
+    assert "음소거리 0.333" in row
 
 
 def test_batch_file_help_exposes_model_domain_and_private_output() -> None:

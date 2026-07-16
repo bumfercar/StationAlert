@@ -173,6 +173,46 @@ STT입니다.
 안의 2.0을 적용하고 나머지 역은 1.0으로 유지했습니다. 이 혼합 설정이 전체 노선의
 최적값이라고 주장하지 않으며, 목적지 우선순위를 반영한 제품 정책으로 구분합니다.
 
+## 오디오 전처리와 문맥 기반 역명 복원
+
+객실 저주파 진동과 원거리 방송을 분리하기 위해 같은 먹골 20초 구간에 FFmpeg
+전처리를 적용했습니다. 전처리 외 설정은 `sommers_ko + MEETING`, 노선 score 1.0,
+목적지 score 2.0으로 고정했습니다.
+
+| 전처리 | partial/final | RTZR의 먹골 유사 출력 | exact 역명 | 문맥 복원 |
+| --- | ---: | --- | ---: | ---: |
+| `none` | 11/5 | `막고니` | 0 | 미적용 |
+| `subway_speech_v1` | 11/2 | `마보니` | 0 | 미적용 |
+| `subway_rumble_cut_v1` | 11/3 | `마콜` | 0 | 미적용 |
+| `subway_rumble_cut_v1` | 11/3 | `마콜` | 0 | 먹골 1건 |
+
+`subway_speech_v1`은 100 Hz high-pass, 7.5 kHz low-pass, 약한 FFT denoise와 speech
+normalization을 함께 적용했지만 final 경계를 5개에서 2개로 크게 바꿨고 exact 역명은
+늘지 않았습니다. 반면 저주파만 줄이는 `subway_rumble_cut_v1`은 `마콜`까지 가까워졌지만
+전처리만으로는 정답이 아닙니다. 따라서 기본값은 비교 기준인 `none`으로 유지합니다.
+
+`--recover`는 다음 조건을 모두 만족할 때만 `마콜 → 먹골`처럼 역명을 복원하는 opt-in
+기능입니다.
+
+- final 안에 `이번…` 같은 안내방송 문맥이 있음
+- 후보가 공릉–어린이대공원 구간 역명으로 한정됨
+- 한글 음소 edit가 2개 이하이고 정규화 거리가 0.333 이하임
+- 두 번째로 가까운 역과의 거리 차이가 0.2 이상임
+
+전사 원문은 수정하지 않습니다. CLI와 비공개 JSON에 `contextual_phonetic_recovery`, 원래
+token, 복원한 역명, 음소 거리를 함께 남깁니다. 따라서 이 결과는 **STT exact 성공이
+아니라 지하철 도메인 후처리의 역명 추출 성공**으로 평가합니다.
+
+```bash
+./scripts/run_demo.sh --source-file ../subwayaudio.m4a --destination 먹골 \
+  --start-seconds 265 --duration-seconds 20 \
+  --preprocess subway_rumble_cut_v1 --recover --show-text --yes
+```
+
+```text
+01. 먹골역 | 원본 04:27 | 목적지 도착 · 하차 | 문맥 복원 마콜→먹골 (음소거리 0.333)
+```
+
 ## 평가 기준
 
 평가 단위를 다음처럼 분리합니다.
@@ -215,6 +255,10 @@ FFmpeg adapter가 실행 중 다음 조건의 raw PCM을 생성합니다.
 - RTZR에 명시적으로 전달한 sample rate
 - WAV의 `RIFF` header가 없는 raw frame
 
+선택한 전처리 preset은 FFmpeg filter graph와 함께 결과 JSON에 저장됩니다. 전처리를
+사용하지 않은 baseline도 같은 구조로 `preprocess=none`을 기록하므로 A/B 조건을 나중에
+확인할 수 있습니다.
+
 첫 frame이 `RIFF`로 시작하면 전송을 거부하며, frame 전송 속도는 실제 음성 시간에
 맞춥니다. Python 코드는 shell 문자열을 조립하지 않고 FFmpeg 인자를 직접 전달합니다.
 
@@ -247,7 +291,8 @@ export RTZR_CLIENT_SECRET="..."
   사용하며, 범위 밖 목적지는 API 호출 전에 거부합니다.
 - score 비교는 어린이대공원 20초 한 구간의 관찰이므로 더 많은 역에서 재검증해야 합니다.
 - 광고가 포함된 긴 구간과 알아듣기 어려운 사람 정답은 CER에서 명시적으로 제외합니다.
-- fuzzy match는 오탐 위험 때문에 사용하지 않았습니다.
+- 기본 정책은 fuzzy match를 사용하지 않습니다. `--recover`를 명시한 실험에서만 안내
+  문맥, 노선 후보, 음소거리와 차순위 margin을 모두 검사하며 전체 구간 평가는 남아 있습니다.
 - 원본 녹음과 전사 결과는 개인정보 보호를 위해 공개 저장소에 포함하지 않습니다.
 
 ## 참고한 공식 문서

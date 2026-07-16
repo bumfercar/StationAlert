@@ -16,7 +16,9 @@ may emit:
 
 - `CURRENT_STATION`: canonical station with an explicit `역` or known secondary-name pattern;
 - `STATION_CANDIDATE`: exact bare station token that needs more context;
-- no station: fuzzy or inner-substring matches are rejected.
+- `CURRENT_STATION` with `contextual_phonetic_recovery`: opt-in recovery constrained by final
+  announcement context, route vocabulary, phonetic distance, and runner-up margin;
+- no station: fuzzy or inner-substring matches are rejected by the default policy.
 
 Each extraction includes a stable machine-readable reason. Partial transcripts can be displayed
 but do not establish the current station under the default policy. Destination alerts remain an
@@ -100,11 +102,12 @@ with explicit labels.
 
 ```text
 audio source
-  -> decode / normalize / pace
+  -> decode / optional auditable preprocessing / normalize / pace
   -> RTZR WebSocket client
   -> typed response parser and raw JSONL evidence
   -> text normalization
   -> announcement classifier
+  -> optional context-gated phonetic station recovery
   -> ordered route-state validator
   -> current-station extraction
   -> station + structured reason

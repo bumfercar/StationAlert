@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
+from enum import StrEnum
 from pathlib import Path
 
 from nextstop_stt.audio.errors import AudioSourceError
@@ -15,6 +16,27 @@ PCM_SAMPLE_WIDTH_BYTES = 2
 MIN_SAMPLE_RATE = 8_000
 MAX_SAMPLE_RATE = 48_000
 DEFAULT_CHUNK_DURATION_MS = 100
+
+
+class AudioPreprocessPreset(StrEnum):
+    """Auditable FFmpeg preprocessing choices for controlled STT comparison."""
+
+    NONE = "none"
+    SUBWAY_RUMBLE_CUT_V1 = "subway_rumble_cut_v1"
+    SUBWAY_SPEECH_V1 = "subway_speech_v1"
+
+    @property
+    def filter_graph(self) -> str | None:
+        if self is AudioPreprocessPreset.SUBWAY_RUMBLE_CUT_V1:
+            return "highpass=f=100:p=2"
+        if self is AudioPreprocessPreset.SUBWAY_SPEECH_V1:
+            return (
+                "highpass=f=100,"
+                "lowpass=f=7500,"
+                "afftdn=nr=8:nf=-35:tn=1:gs=5,"
+                "speechnorm=e=2:c=2:r=0.0005:f=0.0005"
+            )
+        return None
 
 
 def probe_audio_duration_ms(
@@ -66,6 +88,7 @@ class FFmpegPCMSource:
         start_ms: int = 0,
         duration_ms: int | None = None,
         chunk_duration_ms: int = DEFAULT_CHUNK_DURATION_MS,
+        preprocess: AudioPreprocessPreset = AudioPreprocessPreset.NONE,
         realtime: bool = True,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -91,6 +114,7 @@ class FFmpegPCMSource:
         self.start_ms = start_ms
         self.duration_ms = duration_ms
         self.chunk_duration_ms = chunk_duration_ms
+        self.preprocess = preprocess
         self.realtime = realtime
         self.bytes_per_chunk = bytes_per_chunk
         self._bytes_per_second = sample_rate * PCM_SAMPLE_WIDTH_BYTES
@@ -151,6 +175,8 @@ class FFmpegPCMSource:
             command.extend(("-ss", _seconds(self.start_ms)))
         if self.duration_ms is not None:
             command.extend(("-t", _seconds(self.duration_ms)))
+        if self.preprocess.filter_graph is not None:
+            command.extend(("-af", self.preprocess.filter_graph))
         command.extend(
             (
                 "-vn",

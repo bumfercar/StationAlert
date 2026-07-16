@@ -16,7 +16,11 @@ from rich.text import Text
 
 from nextstop_stt import __version__
 from nextstop_stt.audio.errors import AudioSourceError
-from nextstop_stt.audio.file_replay import FFmpegPCMSource, probe_audio_duration_ms
+from nextstop_stt.audio.file_replay import (
+    AudioPreprocessPreset,
+    FFmpegPCMSource,
+    probe_audio_duration_ms,
+)
 from nextstop_stt.detection import DestinationAlertDetector
 from nextstop_stt.evaluation.batch_predictions import (
     build_batch_predictions,
@@ -53,6 +57,8 @@ from nextstop_stt.rtzr.models import (
 )
 from nextstop_stt.rtzr.streaming_client import RTZRStreamingClient
 from nextstop_stt.station_extraction import (
+    StationMatchReason,
+    StationMention,
     extract_line7_station_mentions,
     line7_keyword_vocabulary,
     line7_station_keyword_vocabulary,
@@ -363,6 +369,17 @@ def stream_file(
         typer.Option(min=0, help="Segment start from the input file."),
     ] = 0,
     sample_rate: Annotated[int, typer.Option(min=8_000, max=48_000)] = 16_000,
+    preprocess: Annotated[
+        AudioPreprocessPreset,
+        typer.Option(help="Optional FFmpeg speech preprocessing preset."),
+    ] = AudioPreprocessPreset.NONE,
+    contextual_recovery: Annotated[
+        bool,
+        typer.Option(
+            "--recover",
+            help="Opt in to context-gated Line 7 phonetic station recovery.",
+        ),
+    ] = False,
     domain: Annotated[StreamingDomain, typer.Option()] = StreamingDomain.MEETING,
     model: Annotated[StreamingModel, typer.Option()] = StreamingModel.SOMMERS_KO,
     language: Annotated[
@@ -417,6 +434,8 @@ def stream_file(
                 duration_ms=duration_ms,
                 start_ms=start_ms,
                 sample_rate=sample_rate,
+                preprocess=preprocess,
+                contextual_recovery=contextual_recovery,
                 domain=domain,
                 model=model,
                 language=language,
@@ -502,6 +521,17 @@ def journey_demo(
         float,
         typer.Option(min=-5.0, max=5.0, help="Higher score for the requested destination."),
     ] = 2.0,
+    preprocess: Annotated[
+        AudioPreprocessPreset,
+        typer.Option(help="Audio preprocessing preset; none keeps the baseline."),
+    ] = AudioPreprocessPreset.NONE,
+    contextual_recovery: Annotated[
+        bool,
+        typer.Option(
+            "--recover",
+            help="Recover one unique station from announcement context and phonetic distance.",
+        ),
+    ] = False,
     show_text: Annotated[
         bool,
         typer.Option(
@@ -564,6 +594,11 @@ def journey_demo(
         f"[RTZR 설정] model=sommers_ko domain={domain.value} "
         f"route keyword={keyword_score:.1f} destination={destination_score:.1f}"
     )
+    typer.echo(f"[오디오 전처리] {preprocess.value}")
+    typer.echo(
+        "[역명 복원] "
+        + ("안내 문맥 기반 음소 복원 사용" if contextual_recovery else "exact match만 사용")
+    )
     typer.echo(
         f"[원본 길이] {_clock_text(total_duration_ms)}"
     )
@@ -585,6 +620,8 @@ def journey_demo(
                 duration_ms=duration_ms,
                 start_ms=start_ms,
                 sample_rate=16_000,
+                preprocess=preprocess,
+                contextual_recovery=contextual_recovery,
                 domain=domain,
                 model=StreamingModel.SOMMERS_KO,
                 language=None,
@@ -622,6 +659,8 @@ async def _stream_file(
     duration_ms: int,
     start_ms: int,
     sample_rate: int,
+    preprocess: AudioPreprocessPreset = AudioPreprocessPreset.NONE,
+    contextual_recovery: bool = False,
     domain: StreamingDomain,
     model: StreamingModel,
     language: str | None,
@@ -639,6 +678,7 @@ async def _stream_file(
         sample_rate=sample_rate,
         start_ms=start_ms,
         duration_ms=duration_ms,
+        preprocess=preprocess,
     )
     config = StreamingConfig(
         sample_rate=sample_rate,
@@ -678,6 +718,13 @@ async def _stream_file(
                     "api": "streaming",
                     "status": status,
                     "config": config.to_query_params(),
+                    "audio": {
+                        "preprocess": preprocess.value,
+                        "filter_graph": preprocess.filter_graph,
+                    },
+                    "station_extraction": {
+                        "contextual_recovery": contextual_recovery,
+                    },
                     "segment": {
                         "start_ms": start_ms,
                         "duration_ms": duration_ms,
@@ -723,7 +770,10 @@ async def _stream_file(
             else:
                 partial_count += 1
             if detect_stations and response.final:
-                mentions = extract_line7_station_mentions(response.primary_text)
+                mentions = extract_line7_station_mentions(
+                    response.primary_text,
+                    allow_contextual_recovery=contextual_recovery,
+                )
                 for mention in mentions:
                     if mention.is_current_station_evidence:
                         if journey_tracker is None:
@@ -741,6 +791,7 @@ async def _stream_file(
                                 replay_display.add_station(
                                     update,
                                     source_time_ms=start_ms + response.start_at,
+                                    mention=mention,
                                 )
                             journey_records.append(
                                 {
@@ -751,6 +802,9 @@ async def _stream_file(
                                     "status": update.status.value,
                                     "direction": update.direction.value,
                                     "source_time_ms": start_ms + response.start_at,
+                                    "extraction_reason": mention.reason.value,
+                                    "observed_token": mention.observed_token,
+                                    "phonetic_distance": mention.phonetic_distance,
                                 }
                             )
                             if accepted:
@@ -767,6 +821,8 @@ async def _stream_file(
                             "is_current_station_evidence": (
                                 mention.is_current_station_evidence
                             ),
+                            "observed_token": mention.observed_token,
+                            "phonetic_distance": mention.phonetic_distance,
                             "source_time_ms": start_ms + response.start_at,
                         }
                     )
@@ -863,7 +919,13 @@ class _ReplayDisplay:
             await asyncio.gather(self._task, return_exceptions=True)
         self._status.stop()
 
-    def add_station(self, update: JourneyUpdate, *, source_time_ms: int) -> None:
+    def add_station(
+        self,
+        update: JourneyUpdate,
+        *,
+        source_time_ms: int,
+        mention: StationMention | None = None,
+    ) -> None:
         self._station_number += 1
         self._current_station = update.station
         self._console.print(
@@ -871,6 +933,7 @@ class _ReplayDisplay:
                 self._station_number,
                 update,
                 source_time_ms=source_time_ms,
+                mention=mention,
             ),
             markup=False,
         )
@@ -933,12 +996,27 @@ def _journey_summary(update: JourneyUpdate) -> str:
     )
 
 
-def _station_row(number: int, update: JourneyUpdate, *, source_time_ms: int) -> str:
-    return (
+def _station_row(
+    number: int,
+    update: JourneyUpdate,
+    *,
+    source_time_ms: int,
+    mention: StationMention | None = None,
+) -> str:
+    row = (
         f"{number:02d}. {update.station}역"
         f" | 원본 {_clock_text(source_time_ms)}"
         f" | {_journey_summary(update)}"
     )
+    if (
+        mention is not None
+        and mention.reason is StationMatchReason.CONTEXTUAL_PHONETIC_RECOVERY
+    ):
+        row += (
+            f" | 문맥 복원 {mention.observed_token}→{mention.station}"
+            f" (음소거리 {mention.phonetic_distance:.3f})"
+        )
+    return row
 
 
 def _clock_text(milliseconds: int) -> str:
