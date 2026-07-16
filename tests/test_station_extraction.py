@@ -22,6 +22,14 @@ def test_extracts_attached_station_suffix() -> None:
     assert mentions[0].reason is StationMatchReason.CANONICAL_SUFFIX
 
 
+def test_extracts_spoken_station_form_with_spaces() -> None:
+    mentions = extract_line7_station_mentions("이번 역은 태능 입구역입니다")
+
+    assert len(mentions) == 1
+    assert mentions[0].station == "태릉입구"
+    assert mentions[0].reason is StationMatchReason.CANONICAL_SUFFIX
+
+
 def test_known_alias_is_strong_evidence_even_when_station_suffix_is_dropped() -> None:
     mentions = extract_line7_station_mentions("어린이대공원 세종대")
 
@@ -108,6 +116,9 @@ def test_keyword_vocabulary_contains_canonical_and_secondary_names() -> None:
     vocabulary = line7_keyword_vocabulary()
 
     assert "공릉" in vocabulary
+    assert "공능" in vocabulary
+    assert "태릉 입구" in vocabulary
+    assert "태능 입구" in vocabulary
     assert "노원" not in vocabulary
     assert "중계" not in vocabulary
     assert "하계" not in vocabulary
@@ -120,4 +131,5 @@ def test_destination_keyword_vocabulary_contains_secondary_name() -> None:
     assert line7_station_keyword_vocabulary("어린이대공원") == (
         "어린이대공원",
         "세종대",
+        "어린이 대공원",
     )

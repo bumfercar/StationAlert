@@ -537,7 +537,7 @@ def journey_demo(
             "--show-text/--hide-text",
             help="Print finalized RTZR transcript text; may include nearby speech.",
         ),
-    ] = True,
+    ] = False,
     output_file: Annotated[
         Path,
         typer.Option(help="Private JSON evidence under results/private/."),
@@ -598,8 +598,6 @@ def journey_demo(
         raise typer.Exit()
 
     typer.echo("음성 인식을 시작합니다. 중단하려면 Ctrl+C를 누르세요.")
-    if show_text:
-        typer.echo("RTZR 전사문도 함께 표시합니다.")
     try:
         _, final, _, stations, _ = asyncio.run(
             _stream_file(

@@ -26,6 +26,7 @@ class StationDefinition:
 
     name: str
     aliases: tuple[str, ...] = ()
+    spoken_forms: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -43,17 +44,28 @@ class StationMention:
 
 
 LINE_7_DEMO_STATIONS = (
-    StationDefinition("공릉"),
-    StationDefinition("태릉입구"),
+    StationDefinition("공릉", spoken_forms=("공능",)),
+    StationDefinition(
+        "태릉입구",
+        spoken_forms=("태릉 입구", "태능입구", "태능 입구"),
+    ),
     StationDefinition("먹골"),
     StationDefinition("중화"),
     StationDefinition("상봉"),
-    StationDefinition("면목", aliases=("서일대입구",)),
+    StationDefinition("면목", aliases=("서일대입구",), spoken_forms=("서일대 입구",)),
     StationDefinition("사가정"),
-    StationDefinition("용마산", aliases=("용마폭포공원",)),
+    StationDefinition(
+        "용마산",
+        aliases=("용마폭포공원",),
+        spoken_forms=("용마 폭포 공원",),
+    ),
     StationDefinition("중곡"),
     StationDefinition("군자"),
-    StationDefinition("어린이대공원", aliases=("세종대",)),
+    StationDefinition(
+        "어린이대공원",
+        aliases=("세종대",),
+        spoken_forms=("어린이 대공원",),
+    ),
 )
 
 _CURRENT_STATION_CONTEXT = frozenset(
@@ -98,7 +110,7 @@ def line7_keyword_vocabulary() -> tuple[str, ...]:
     return tuple(
         keyword
         for station in LINE_7_DEMO_STATIONS
-        for keyword in (station.name, *station.aliases)
+        for keyword in (station.name, *station.aliases, *station.spoken_forms)
     )
 
 
@@ -106,7 +118,7 @@ def line7_station_keyword_vocabulary(station_name: str) -> tuple[str, ...]:
     """Return the canonical and secondary names for one destination station."""
     for station in LINE_7_DEMO_STATIONS:
         if station.name == station_name:
-            return (station.name, *station.aliases)
+            return (station.name, *station.aliases, *station.spoken_forms)
     raise ValueError("station_name is outside the demo route")
 
 
@@ -146,24 +158,45 @@ def _strongest_reason(
     has_announcement_context: bool,
 ) -> StationMatchReason | None:
     fallback = None
-    canonical_with_suffix = f"{station.name}역"
+    primary_forms = (station.name, *station.spoken_forms)
     for index, token in enumerate(tokens):
-        if token.startswith(canonical_with_suffix):
-            return StationMatchReason.CANONICAL_SUFFIX
+        for form in primary_forms:
+            form_tokens = normalize_text(form).split()
+            if not form_tokens:
+                continue
+            if len(form_tokens) == 1 and token.startswith(f"{form}역"):
+                return StationMatchReason.CANONICAL_SUFFIX
+            if not _tokens_match_form(tokens, index, form_tokens):
+                continue
+            suffix_index = index + len(form_tokens)
+            if suffix_index < len(tokens) and tokens[suffix_index].startswith("역"):
+                return StationMatchReason.CANONICAL_SUFFIX
+            if tokens[index + len(form_tokens) - 1].startswith(f"{form_tokens[-1]}역"):
+                return StationMatchReason.CANONICAL_SUFFIX
+            fallback = (
+                StationMatchReason.CANONICAL_ANNOUNCEMENT_CONTEXT
+                if has_announcement_context
+                else StationMatchReason.CANONICAL_TOKEN
+            )
         if token != station.name:
             continue
-        if index + 1 < len(tokens) and tokens[index + 1].startswith("역"):
-            return StationMatchReason.CANONICAL_SUFFIX
         if index + 1 < len(tokens) and tokens[index + 1] in station.aliases:
             if index + 2 < len(tokens) and tokens[index + 2].startswith("역"):
                 return StationMatchReason.CANONICAL_ALIAS_SUFFIX
             return StationMatchReason.CANONICAL_ALIAS
-        fallback = (
-            StationMatchReason.CANONICAL_ANNOUNCEMENT_CONTEXT
-            if has_announcement_context
-            else StationMatchReason.CANONICAL_TOKEN
-        )
     return fallback
+
+
+def _tokens_match_form(tokens: list[str], start: int, form_tokens: list[str]) -> bool:
+    if start + len(form_tokens) > len(tokens):
+        return False
+    for offset, form_token in enumerate(form_tokens):
+        token = tokens[start + offset]
+        if offset == len(form_tokens) - 1 and token.startswith(f"{form_token}역"):
+            continue
+        if token != form_token:
+            return False
+    return True
 
 
 def _has_context(tokens: list[str], contexts: frozenset[str]) -> bool:

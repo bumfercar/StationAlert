@@ -151,8 +151,11 @@ def test_journey_demo_shows_prepare_and_arrival_flow(tmp_path, monkeypatch) -> N
     assert captured["duration_ms"] == 60_000
     assert captured["preprocess"] is cli_module.AudioPreprocessPreset.NONE
     assert captured["contextual_recovery"] is False
+    assert captured["show_text"] is False
+    assert "RTZR 전사문도 함께 표시합니다" not in result.output
     keyword_scores = {boost.text: boost.score for boost in captured["keywords"]}
     assert keyword_scores["어린이대공원"] == 2.0
+    assert keyword_scores["어린이 대공원"] == 2.0
     assert keyword_scores["세종대"] == 2.0
     assert keyword_scores["군자"] == 1.0
 
