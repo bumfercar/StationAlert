@@ -38,6 +38,14 @@ def test_english_subway_context_promotes_spoken_station_form() -> None:
     assert mentions[0].reason is StationMatchReason.CANONICAL_ANNOUNCEMENT_CONTEXT
 
 
+def test_this_station_context_promotes_gongneung() -> None:
+    mentions = extract_line7_station_mentions("this station is 공릉 공릉")
+
+    assert len(mentions) == 1
+    assert mentions[0].station == "공릉"
+    assert mentions[0].reason is StationMatchReason.CANONICAL_ANNOUNCEMENT_CONTEXT
+
+
 def test_known_alias_is_strong_evidence_even_when_station_suffix_is_dropped() -> None:
     mentions = extract_line7_station_mentions("어린이대공원 세종대")
 

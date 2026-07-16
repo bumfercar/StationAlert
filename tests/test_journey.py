@@ -65,3 +65,14 @@ def test_journey_can_start_from_known_recording_route() -> None:
     assert context.station == "공릉"
     assert context.stations_remaining == 1
     assert update.status is JourneyStatus.PASSED_DESTINATION
+
+
+def test_known_start_station_can_still_be_confirmed_by_stt_once() -> None:
+    tracker = JourneyTracker("태릉입구", initial_station="공릉")
+
+    confirmed = tracker.observe("공릉")
+    duplicate = tracker.observe("공릉")
+
+    assert confirmed.status is JourneyStatus.EN_ROUTE
+    assert confirmed.stations_remaining == 1
+    assert duplicate.status is JourneyStatus.DUPLICATE

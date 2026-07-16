@@ -62,6 +62,7 @@ class JourneyTracker:
             else None
         )
         self._direction = TravelDirection.UNKNOWN
+        self._has_stt_observation = False
 
     def route_context(self) -> JourneyUpdate | None:
         """Return the known recording start position, separate from STT evidence."""
@@ -78,6 +79,11 @@ class JourneyTracker:
             raise ValueError("observed station is outside the demo route")
         station_index = LINE_7_DEMO_ROUTE.index(station)
         if self._current_index == station_index:
+            if not self._has_stt_observation:
+                self._has_stt_observation = True
+                remaining = self._remaining(station_index)
+                status = JourneyStatus.ARRIVED if remaining == 0 else JourneyStatus.EN_ROUTE
+                return self._update(station, remaining, status)
             return self._update(
                 station,
                 self._remaining(station_index),
@@ -85,6 +91,7 @@ class JourneyTracker:
             )
         if self._current_index is None:
             self._current_index = station_index
+            self._has_stt_observation = True
             remaining = abs(self._destination_index - station_index)
             status = JourneyStatus.ARRIVED if remaining == 0 else JourneyStatus.EN_ROUTE
             return self._update(station, remaining, status)
@@ -104,6 +111,7 @@ class JourneyTracker:
             )
 
         self._current_index = station_index
+        self._has_stt_observation = True
         remaining = self._remaining(station_index)
         if remaining == 1:
             status = JourneyStatus.PREPARE_TO_EXIT
