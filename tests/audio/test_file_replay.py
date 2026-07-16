@@ -43,22 +43,6 @@ def test_command_requests_headerless_mono_linear16(tmp_path: Path) -> None:
     assert command[command.index("-t") : command.index("-t") + 2] == ("-t", "2.000")
 
 
-def test_subway_preprocess_adds_auditable_ffmpeg_filter(tmp_path: Path) -> None:
-    audio_path = _write_silence(tmp_path / "sample.wav")
-    source = FFmpegPCMSource(
-        audio_path,
-        sample_rate=16_000,
-        preprocess=AudioPreprocessPreset.SUBWAY_SPEECH_V1,
-    )
-
-    command = source._command("ffmpeg")
-
-    assert "-af" in command
-    assert source.preprocess.filter_graph in command
-    assert "highpass=f=100" in source.preprocess.filter_graph
-    assert "afftdn=nr=8" in source.preprocess.filter_graph
-
-
 def test_rumble_cut_keeps_filter_chain_minimal(tmp_path: Path) -> None:
     audio_path = _write_silence(tmp_path / "sample.wav")
     source = FFmpegPCMSource(

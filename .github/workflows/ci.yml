@@ -56,9 +56,6 @@ jobs:
       - name: Run FFmpeg integration tests
         run: uv run --frozen pytest tests/audio
 
-      - name: Run evaluation unit tests
-        run: uv run --frozen pytest tests/evaluation
-
       - name: Run RTZR unit tests
         run: uv run --frozen pytest tests/rtzr
 

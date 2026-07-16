@@ -19,23 +19,15 @@ DEFAULT_CHUNK_DURATION_MS = 100
 
 
 class AudioPreprocessPreset(StrEnum):
-    """Auditable FFmpeg preprocessing choices for controlled STT comparison."""
+    """FFmpeg preprocessing used by the fixed subway demonstration."""
 
     NONE = "none"
     SUBWAY_RUMBLE_CUT_V1 = "subway_rumble_cut_v1"
-    SUBWAY_SPEECH_V1 = "subway_speech_v1"
 
     @property
     def filter_graph(self) -> str | None:
         if self is AudioPreprocessPreset.SUBWAY_RUMBLE_CUT_V1:
             return "highpass=f=100:p=2"
-        if self is AudioPreprocessPreset.SUBWAY_SPEECH_V1:
-            return (
-                "highpass=f=100,"
-                "lowpass=f=7500,"
-                "afftdn=nr=8:nf=-35:tn=1:gs=5,"
-                "speechnorm=e=2:c=2:r=0.0005:f=0.0005"
-            )
         return None
 
 

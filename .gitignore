@@ -7,6 +7,11 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.uv-cache/
+.coverage
+coverage.xml
+htmlcov/
+*.log
 .venv/
 build/
 dist/
@@ -20,6 +25,10 @@ dist/
 private_audio/
 results/private/
 reports/private/
+*.m4a
+*.wav
+*.mp3
+*.flac
 
 # Local editor files
 .idea/

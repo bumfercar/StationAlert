@@ -1,308 +1,210 @@
 # NextStop STT
 
-NextStop STT는 실제 지하철 녹음을 RTZR Streaming STT로 재생하고, final 응답에서
-현재 역명을 추출하는 Python CLI 데모입니다. 전체 전사문을 그대로 보여주는 것보다
-`안내방송 인식 → 역명 추출 → 근거 출력` 과정을 재현 가능하게 만드는 데 집중했습니다.
+[![Cross-platform CI](https://github.com/bumfercar/StationAlert/actions/workflows/ci.yml/badge.svg)](https://github.com/bumfercar/StationAlert/actions/workflows/ci.yml)
 
-| 평가 대상 | 확인할 질문 | 지표 |
-| --- | --- | --- |
-| 음성인식 | 안내방송과 역명을 정확히 전사했는가? | CER, 역명 CER, 역명 일치율 |
-| 역명 추출 | 현재 역명을 정확한 토큰으로 찾았는가? | 역명 일치율, 추출 근거 |
-| 실시간성 | 안내방송을 final 응답으로 언제 확정했는가? | partial/final 수, 응답 시각 |
+RTZR Streaming STT로 지하철 안내방송에서 현재역을 찾고, 사용자가 지정한 역의 도착을
+알려주는 Python CLI 데모입니다.
 
-> **현재 상태:** RTZR 인증, M4A 실시간 재생, Streaming WebSocket, Batch 비교,
-> 역명 추출, 비공개 결과 저장과 offline test를 구현했습니다. 아래 수치는 동일한 실제
-> 20초 구간을 반복 실행한 관찰값이며 전체 노선 성능으로 일반화하지 않습니다.
+이 프로젝트는 임의의 음성 파일을 올리는 범용 STT 도구가 아닙니다. 직접 녹음한
+`subwayaudio.m4a` 한 파일을 고정 입력으로 사용해 공릉역부터 어린이대공원역까지의
+안내방송을 실제 시간 속도로 재현합니다. 사용자는 목적지역만 입력합니다.
 
-## 5분 실행
+```mermaid
+flowchart LR
+    A[subwayaudio.m4a 자동 선택] --> B[목적지역 입력]
+    B --> C[RTZR Streaming STT]
+    C --> D[final 역명 추출]
+    D --> E[현재역·하차 안내]
+```
 
-필요한 도구:
+## 무엇을 확인하는 데모인가
 
-- Python 3.11 (`.python-version`으로 지정)
-- [`uv`](https://docs.astral.sh/uv/getting-started/installation/)
-- FFmpeg: M4A를 raw LINEAR16 frame으로 변환
+- 원거리·소음 환경에서 RTZR Streaming STT가 지하철 안내방송을 어떻게 인식하는가
+- `CALL`·`MEETING` domain과 keyword score가 역명 인식에 어떤 영향을 주는가
+- STT가 만든 final 문장에서 현재역과 광고 속 역명을 구분할 수 있는가
+- 사용자가 지정한 목적지역을 인식했을 때 하차 안내까지 연결되는가
+
+이 데모는 안전한 위치 추적 시스템이 아니라, **RTZR STT 설정과 지하철 도메인 규칙을
+검증하는 proof of concept**입니다.
+
+## 기술 스택
+
+| 기술 | 역할 |
+| --- | --- |
+| Python 3.11 | CLI와 도메인 로직 |
+| RTZR Streaming WebSocket | 실시간 partial/final 음성인식 |
+| Typer + Rich | 대화형 입력과 진행 상태 표시 |
+| HTTPX + WebSockets | 인증과 Streaming 연결 |
+| Pydantic | decoder 설정과 RTZR 응답 검증 |
+| FFmpeg | M4A를 16 kHz mono raw LINEAR16으로 변환 |
+| uv | Python과 dependency 설치·실행 |
+| Pytest + Ruff + GitHub Actions | offline test와 Windows·macOS·Linux 검증 |
+
+## 처음 실행하기
+
+### 1. 고정 음성 배치
+
+`subwayaudio.m4a`는 승객 음성과 개인정보 보호를 위해 GitHub에 올리지 않습니다. 별도로
+전달된 파일을 저장소 루트에 두면 실행 스크립트가 자동으로 선택합니다.
+
+```text
+StationAlert/
+├── subwayaudio.m4a
+├── README.md
+└── scripts/
+```
+
+실행 중에는 음성 경로를 입력하지 않습니다.
+
+### 2. 운영체제별 도구 설치
+
+macOS(Homebrew):
+
+```bash
+brew install git uv ffmpeg
+```
+
+Ubuntu·Debian:
+
+```bash
+sudo apt-get update
+sudo apt-get install --yes git curl ffmpeg
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+winget install --id=Git.Git -e
+winget install --id=astral-sh.uv -e
+winget install --id=Gyan.FFmpeg -e
+```
+
+설치 후 새 터미널에서 `git --version`, `uv --version`, `ffmpeg -version`을 확인합니다.
+Python 3.11과 프로젝트 dependency는 `uv`가 준비합니다.
+
+### 3. 저장소와 RTZR credential 준비
+
+macOS·Linux:
 
 ```bash
 git clone https://github.com/bumfercar/StationAlert.git
 cd StationAlert
-uv sync --extra dev
-uv run nextstop --help
-uv run pytest
-uv run ruff check .
+cp .env.example .env
 ```
 
-`.env.example`을 복사하고 RTZR credential을 입력합니다. `.env`를 자동으로 읽지는 않으므로
-실행 shell에 환경변수를 설정해야 합니다.
+Windows PowerShell:
 
-```bash
-export RTZR_CLIENT_ID="..."
-export RTZR_CLIENT_SECRET="..."
-uv run nextstop check-auth
+```powershell
+git clone https://github.com/bumfercar/StationAlert.git
+Set-Location StationAlert
+Copy-Item .env.example .env
+notepad .env
 ```
 
-Windows PowerShell에서는 다음처럼 설정합니다.
+`.env`에 RTZR Developers에서 발급한 값을 입력합니다.
 
-```text
-$env:RTZR_CLIENT_ID="..."
-$env:RTZR_CLIENT_SECRET="..."
-uv run nextstop check-auth
+```dotenv
+RTZR_CLIENT_ID=your_client_id
+RTZR_CLIENT_SECRET=your_client_secret
 ```
 
-## 운영체제별 한 번 실행
+### 4. 데모 실행
 
-`.env.example`을 `.env`로 복사하고 credential을 입력한 뒤 실행합니다. 스크립트가
-프로젝트 위치 이동, `.env` 로드, frozen dependency 설치, 대화형 CLI 실행을 담당합니다.
-
-| 운영체제 | 실행 명령 |
+| 운영체제 | 명령 |
 | --- | --- |
-| macOS | `./scripts/run_demo.sh` |
-| Linux | `./scripts/run_demo.sh` |
+| macOS·Linux | `./scripts/run_demo.sh` |
 | Windows PowerShell | `powershell -ExecutionPolicy Bypass -File .\scripts\run_demo.ps1` |
 
-CLI는 기본으로 상위 폴더의 `subwayaudio.m4a`를 사용하고, 목적지역만 질문합니다.
-녹음 범위는 공릉역부터 어린이대공원역까지입니다.
+스크립트가 `subwayaudio.m4a`와 `.env`를 자동으로 읽고 dependency를 설치한 뒤 데모를
+시작합니다. 사용자는 공릉–어린이대공원 구간 안에서 목적지역만 입력합니다.
 
 ```text
 NextStop STT
 공릉역부터 어린이대공원역까지의 녹음에서 현재 역을 인식합니다.
-목적지역을 입력해주세요 (공릉~어린이대공원):
-```
+목적지역을 입력해주세요 (공릉~어린이대공원): 어린이대공원
 
-파일 길이는 FFprobe로 자동 확인하며 기본적으로 녹음 전체를 실시간 속도로 재생합니다.
-`--start-seconds`와 `--duration-seconds`는 특정 실패 구간을 빠르게 다시 확인할 때만 쓰는
-고급 option입니다.
-
-현재 비공개 녹음을 처음부터 끝까지 실제 여행처럼 실행하려면 스크립트만 실행하면 됩니다.
-
-```bash
-./scripts/run_demo.sh
-```
-
-사용자 데모 화면에는 RTZR 원문 전사를 출력하지 않습니다. 전사 오류가 많은 지하철
-환경에서는 원문보다 “현재 어느 역으로 판단했는지”가 더 중요하기 때문입니다.
-디버깅이나 보고서 근거 수집이 필요할 때만 `--show-text`를 붙여 final 전사를 확인합니다.
-
-```bash
-./scripts/run_demo.sh --show-text
-```
-
-원본이 19분 39초이므로 실제 실행도 같은 시간이 걸립니다. 목적지역 부근 UI만 20초 동안
-빠르게 확인하려면 고급 구간 option을 사용합니다.
-
-```bash
-./scripts/run_demo.sh --destination 어린이대공원 --start-seconds 1124 --duration-seconds 20
-```
-
-Windows에서도 같은 option을 `run_demo.ps1` 뒤에 붙이면 됩니다.
-
-실제 end-to-end 검증에서는 다음 흐름이 출력됐습니다.
-
-```text
 목적지역: 어린이대공원역
-사용 음성: subwayaudio.m4a (19:39)
 인식 구간: 공릉 → 태릉입구 → 먹골 → 중화 → 상봉 → 면목 → 사가정 → 용마산 → 중곡 → 군자 → 어린이대공원
 음성 인식을 시작합니다. 중단하려면 Ctrl+C를 누르세요.
-◜ 인식 중 · 역 방송 대기 · 00:03 / 00:20 · Ctrl+C 중단
+◜ 인식 중 · 역 방송 대기 · 00:03 / 19:39 · Ctrl+C 중단
+...
 01. 현재 어린이대공원역입니다. | 목적지역에 곧 도착합니다. 이번 역에서 하차하세요.
-완료: 인식된 역 1개, RTZR final 5개
-실행 근거 저장: results/private/journey-demo.json
 ```
 
-기본 decoder는 지하철 원거리 방송에서 가장 잘 동작한 `sommers_ko + MEETING`입니다.
-노선 전체 역명은 score 1.0으로 유지하고, 사용자가 입력한 목적지역의 본역명과 부역명은
-score 2.0으로 올립니다. 따라서 목적지를 우선하면서도 지나가는 역 인식은 계속 수행합니다.
-키워드는 RTZR 권장 형식에 맞춰 역명 표기뿐 아니라 `태릉 입구`, `태능 입구`,
-`어린이 대공원`처럼 발음과 띄어쓰기 변형도 함께 넣습니다.
-후처리는 `이번 역은`, `내리실 문`, `this stop`, `the doors on your right/left`
-같은 정형 안내방송 문맥 안에서만 역명을 현재역 근거로 승격합니다.
+파일 전체를 실제 시간 속도로 보내므로 실행 시간은 약 19분 39초입니다. 목적지역을 먼저
+찾으면 안내 후 자동 종료하며, 사용자가 중단하려면 `Ctrl+C`를 누릅니다.
 
-역명 없는 final 응답은 매번 출력하지 않고 JSON에만 보존합니다. 화면의 한 줄 spinner는
-음성이 계속 전송 중임을 보여주며, 기존 역과 다른 역이 확정될 때만 번호가 붙은 행을
-추가합니다. 두 역이 순서대로 잡히면 노선 순서로 이동 방향을 판별합니다.
+## 적용한 RTZR 설정
 
-한 정거장 전 역을 강한 패턴으로 인식하면 `[하차 준비]`를 출력하도록 구현했습니다.
-현재 녹음의 군자 추정 구간에서는 RTZR가 역명을 검출하지 못해 실제 `[하차 준비]`는
-발생하지 않았고, 이 한계는 그대로 남겼습니다. 목적지역 자체는 실제 녹음에서
-`[도착]`까지 확인했습니다.
+| 설정 | 값 | 선택 이유 |
+| --- | --- | --- |
+| model | `sommers_ko` | 한국어 Streaming keyword 지원 |
+| domain | `MEETING` | 객실의 원거리 안내방송 환경에 적합 |
+| route keyword | 1.0 | 구간의 모든 역을 같은 조건으로 탐색 |
+| destination keyword | 2.0 | 사용자가 반드시 찾아야 하는 목적지역 우선 |
+| preprocessing | 100 Hz high-pass | 객실 저주파 진동만 줄이고 발화 경계 변화는 최소화 |
+| encoding | raw `LINEAR16`, 16 kHz mono | RTZR Streaming 입력 계약 준수 |
+| decision | final only | 변하는 partial로 인한 오탐·중복 방지 |
 
-## 현재역 추출 상세 명령
+어린이대공원 주변의 동일한 20초를 비교했을 때 `CALL`은 빈 final을 반환했고,
+`MEETING`은 안내방송을 분리했습니다. keyword가 없을 때는
+`어린이비복원 세동제 역`, score 1.0과 2.0에서는 `어린이대공원 세종대 역`으로
+인식했습니다. score 3.0부터 다른 문장에도 `세종`이 나타나는 편향 징후가 있어 제외했습니다.
 
-직접 녹음했거나 사용 권한이 있는 파일을 지정합니다. `duration-ms`를 필수로 두어 실수로
-긴 유료 호출을 실행하지 않도록 했습니다.
+현재역은 final 안에 `역명+역`, 알려진 부역명, `이번 역은`, `this station`, 출입문 안내
+같은 근거가 있을 때만 확정합니다. 광고 속 역명, 문맥 없는 역명 token, 진행 방향과 반대인
+역과 중복 방송은 현재역으로 사용하지 않습니다.
 
-```bash
-uv run nextstop stream-file --source-file path/to/recording.m4a --start-ms 1124000 --duration-ms 20000 --domain MEETING --model sommers_ko --line7-keyword-score 1.0 --detect-station --output-file results/private/demo-current-station.json
-```
-
-실제 확인한 출력은 다음과 같습니다. 기본값에서는 승객 음성이 포함될 수 있는 전체
-전사문을 출력하지 않고, 역명과 판단 근거만 보여줍니다.
+## 핵심 코드 구조
 
 ```text
-CURRENT_STATION: 어린이대공원 reason=canonical_with_alias_and_station_suffix seq=2
-Streaming completed: partial=12, final=5, stations=1, candidates=1, alerts=0
+scripts/run_demo.*                 운영체제별 한 번 실행
+src/nextstop_stt/audio/            M4A → 실시간 raw LINEAR16 변환
+src/nextstop_stt/rtzr/             인증·Streaming WebSocket·응답 검증
+src/nextstop_stt/station_extraction.py  안내 문맥 기반 역명 추출
+src/nextstop_stt/journey.py        노선 순서·방향·목적지 상태 관리
+src/nextstop_stt/cli.py            사용자 입력과 현재역 화면
 ```
 
-`어린이대공원 세종대 역`처럼 본역명과 부역명 사이에 `역`이 오거나, STT가 마지막
-`역`만 놓친 `어린이대공원 세종대`도 알려진 부역명 조합이므로 정답으로
-처리합니다. `--line7-keyword-score`는 정답 역 하나가 아니라 녹음 구간의 모든 역명과
-부역명을 같은 점수로 등록합니다. 반면 `어린이비복원` 같은 유사 문자열은 fuzzy
-match하지 않습니다. 이 실행에서는 `중화` bare token도 1건 나왔지만 `역` 근거가 없어
-현재역으로 출력하지 않고 검토 후보로만 저장했습니다.
+RTZR 연결과 지하철 판단 로직을 분리해, 유료 API를 호출하지 않고도 응답 파싱·역명 추출·
+노선 상태를 각각 테스트할 수 있게 했습니다.
 
-## 왜 Streaming STT인가
+## 실행 실패 시 확인
 
-현재역 안내는 전체 녹음이 끝난 뒤 전사하는 것보다 방송이 끝나는 시점에 역명을
-확정하는 것이 중요합니다. 그래서 기본 실행 경로는 RTZR 일반 STT가 아니라 Streaming
-STT입니다.
+| 증상 | 확인할 내용 |
+| --- | --- |
+| `uv를 설치해주세요` | `uv --version` 확인 후 터미널 다시 실행 |
+| `FFmpeg를 설치해주세요` | `ffmpeg -version`, `ffprobe -version`과 PATH 확인 |
+| credential 오류 | `.env` 파일명과 `RTZR_CLIENT_ID`, `RTZR_CLIENT_SECRET` 값 확인 |
+| 음성 파일을 찾지 못함 | `StationAlert` 루트에 파일명이 정확히 `subwayaudio.m4a`인지 확인 |
+| 실행이 오래 걸림 | 오류가 아니라 원본을 실시간 속도로 보내는 동작이며 전체 약 19분 39초 소요 |
+| 화면에 역이 추가되지 않음 | 연결 오류가 아니라 RTZR final에서 역명 근거를 만들지 못한 구간일 수 있음 |
+| 사용량 초과·429 | RTZR Developers의 남은 사용량과 동시 channel 제한 확인 |
+| 중간에 종료하고 싶음 | `Ctrl+C`; 지금까지 받은 근거는 `results/private/`에 저장 |
 
-일반 STT는 동일한 음성 구간을 파일 단위로 비교할 때 참고 결과로 사용할 수 있지만,
-실시간 알림 지연시간을 평가하는 기준으로 사용하지 않습니다.
+원인을 확인해야 할 때만 `./scripts/run_demo.sh --show-text`를 사용해 RTZR final 전사를
+표시합니다. 전사에는 주변 승객 음성이 포함될 수 있으므로 기본 화면에서는 숨깁니다.
 
-## 도메인과 keyword score 선택
-
-대상은 지하철 객실에서 스마트폰으로 녹음한 원거리 안내방송입니다. 공식 문서상
-`CALL`은 근접 마이크, `MEETING`은 원거리·공개 장소에 적합합니다. 문서 설명만으로
-결정하지 않고 동일한 어린이대공원 주변 20초에 한 요소씩 바꿔 실제 응답을 비교했습니다.
-
-| Domain | Keyword score | partial/final | 목표역 final | 관찰 |
-| --- | ---: | ---: | --- | --- |
-| `CALL` | 없음 | 1/1 | 빈 문자열 | 원거리 안내방송을 거의 검출하지 못함 |
-| `MEETING` | 없음 | 12/5 | `어린이비복원 세동제 역` | 방송 구간은 분리했지만 역명 오인식 |
-| `MEETING` | 1.0 | 12/5 | `어린이대공원 세종대 역` | 정확히 복원 |
-| `MEETING` | 2.0 | 12/5 | `어린이대공원 세종대 역` | 정확하지만 1.0보다 이점이 확인되지 않음 |
-| `MEETING` | 3.0 | 12/5 | `어린이대공원 세종대` | 뒤 구간에도 `세종`이 나타나 과한 편향 징후 |
-
-따라서 데모는 `MEETING`, 일반 노선 역명 1.0, 사용자 목적지역 2.0을 사용합니다. 1.0과
-2.0이 모두 목표역을 복원했고 3.0부터 편향 징후가 관찰됐으므로, 목적지에만 검증 범위
-안의 2.0을 적용하고 나머지 역은 1.0으로 유지했습니다. 이 혼합 설정이 전체 노선의
-최적값이라고 주장하지 않으며, 목적지 우선순위를 반영한 제품 정책으로 구분합니다.
-
-## 오디오 전처리와 안내방송 패턴 후처리
-
-객실 저주파 진동과 원거리 방송을 분리하기 위해 같은 먹골 20초 구간에 FFmpeg
-전처리를 적용했습니다. 전처리 외 설정은 `sommers_ko + MEETING`, 노선 score 1.0,
-목적지 score 2.0으로 고정했습니다.
-
-| 전처리 | partial/final | RTZR의 먹골 유사 출력 | exact 역명 | 후처리 결과 |
-| --- | ---: | --- | ---: | ---: |
-| `none` | 11/5 | `막고니` | 0 | 미적용 |
-| `subway_speech_v1` | 11/2 | `마보니` | 0 | 미적용 |
-| `subway_rumble_cut_v1` | 11/3 | `마콜` | 0 | 미적용 |
-| `subway_rumble_cut_v1` | 11/3 | `마콜` | 0 | 먹골 1건 |
-
-`subway_speech_v1`은 100 Hz high-pass, 7.5 kHz low-pass, 약한 FFT denoise와 speech
-normalization을 함께 적용했지만 final 경계를 5개에서 2개로 크게 바꿨고 exact 역명은
-늘지 않았습니다. 반면 저주파만 줄이는 `subway_rumble_cut_v1`은 `마콜`까지 가까워졌지만
-전처리만으로는 정답이 아닙니다. 따라서 기본값은 비교 기준인 `none`으로 유지합니다.
-
-`--recover`는 다음 조건을 모두 만족할 때만 `마콜 → 먹골`처럼 역명을 보정하는 opt-in
-기능입니다. 사용자 화면에는 내부 보정 이름을 노출하지 않고, 원문 전사와 인식된 현재역만
-보여줍니다.
-
-- final 안에 `이번…` 같은 안내방송 문맥이 있음
-- 후보가 공릉–어린이대공원 구간 역명으로 한정됨
-- 한글 음소 edit가 2개 이하이고 정규화 거리가 0.333 이하임
-- 두 번째로 가까운 역과의 거리 차이가 0.2 이상임
-
-전사 원문은 수정하지 않습니다. CLI와 비공개 JSON에 `contextual_phonetic_recovery`, 원래
-token, 복원한 역명, 음소 거리를 함께 남깁니다. 따라서 이 결과는 **STT exact 성공이
-아니라 지하철 도메인 후처리의 역명 추출 성공**으로 평가합니다.
+## 검증과 한계
 
 ```bash
-./scripts/run_demo.sh --destination 먹골 \
-  --start-seconds 265 --duration-seconds 20 \
-  --preprocess subway_rumble_cut_v1 --recover
+uv sync --frozen --extra dev
+uv run pytest
+uv run ruff check .
 ```
 
-```text
-01. 현재 먹골역입니다. | 목적지역에 곧 도착합니다. 이번 역에서 하차하세요.
-```
+기본 test는 유료 RTZR API를 호출하지 않습니다. GitHub Actions는 Ubuntu, macOS,
+Windows에서 Python 3.11, FFmpeg, CLI와 도메인 로직을 검증합니다.
 
-## 평가 기준
-
-평가 단위를 다음처럼 분리합니다.
-
-- 전사 평가는 사람이 작성한 안내방송 한 구간을 단위로 합니다.
-- 역명 평가는 `역` 접미사가 없는 정확한 역명 토큰도 인식 성공으로 봅니다.
-- 현재역 근거는 `역명+역`, `역명+부역명(+역)`과 출입문 방향 문맥이 함께 나온 정확한
-  역명 토큰처럼 설명 가능한 강한 패턴을 사용합니다.
-- 목적지 알림 평가는 별도 확장 기능이며 현재역 인식 성공과 혼동하지 않습니다.
-- `TP`, `FP`, `FN`, `TN`을 먼저 저장한 뒤 Precision, Recall, F1을 계산합니다.
-- 정답이 없는 구간, 승객 대화, 비슷한 역명도 음성에 포함해 오탐을 확인합니다.
-- 실패한 결과도 삭제하지 않고 설정과 원본 응답을 함께 보관합니다.
-
-## 구현 구조
-
-```text
-비공개 M4A 또는 공개 샘플
-  -> FFmpeg로 mono LINEAR16 PCM 변환
-  -> 실제 재생 시간에 맞춘 raw audio frame
-  -> RTZR Streaming STT WebSocket
-  -> partial/final 응답 및 시간 정보 저장
-  -> 한국어 텍스트 정규화
-  -> final 응답만 역명 추출
-  -> 본역명·부역명 패턴 판정
-  -> 현재역과 machine-readable reason 출력
-```
-
-RTZR 연결과 역명 추출을 분리했습니다. 저장된 응답으로 추출 규칙을 offline test할 수
-있고, STT 인식 오류와 도메인 규칙 오류를 따로 설명할 수 있습니다.
-
-## M4A 입력 처리
-
-보유한 7호선 녹음은 M4A이므로 입력 파일로 사용할 수 있습니다. 다만 M4A 파일 자체를
-Streaming API에 보내지는 않습니다.
-
-FFmpeg adapter가 실행 중 다음 조건의 raw PCM을 생성합니다.
-
-- mono
-- signed 16-bit little-endian PCM
-- RTZR에 명시적으로 전달한 sample rate
-- WAV의 `RIFF` header가 없는 raw frame
-
-선택한 전처리 preset은 FFmpeg filter graph와 함께 결과 JSON에 저장됩니다. 전처리를
-사용하지 않은 baseline도 같은 구조로 `preprocess=none`을 기록하므로 A/B 조건을 나중에
-확인할 수 있습니다.
-
-첫 frame이 `RIFF`로 시작하면 전송을 거부하며, frame 전송 속도는 실제 음성 시간에
-맞춥니다. Python 코드는 shell 문자열을 조립하지 않고 FFmpeg 인자를 직접 전달합니다.
-
-## 비밀정보와 음성 파일 보호
-
-`.env.example`을 참고해 로컬 `.env`를 만들거나 환경변수를 직접 설정합니다.
-
-```bash
-export RTZR_CLIENT_ID="..."
-export RTZR_CLIENT_SECRET="..."
-```
-
-다음 파일은 Git에 포함하지 않습니다.
-
-- 실제 `.env`와 인증 토큰
-- `private_audio/` 아래의 원본 녹음
-- `results/private/` 아래의 비공개 실험 결과
-- `reports/private/` 아래의 제출용 보고서
-- 승객 음성, 개인 정보, 로컬 절대경로
-
-## 관련 문서
-
-- [프로젝트 및 실험 설계](docs/PROJECT_SPEC.md)
-- [Git 작업 방식](docs/GIT_WORKFLOW.md)
-- [AI 활용 및 시행착오](docs/ai-workflow.md)
-
-## 현재 한계와 다음 검증
-
-- 현재역 데모는 실제 녹음 범위인 공릉부터 어린이대공원까지의 7호선 역 목록만
-  사용하며, 범위 밖 목적지는 API 호출 전에 거부합니다.
-- score 비교는 어린이대공원 20초 한 구간의 관찰이므로 더 많은 역에서 재검증해야 합니다.
-- 광고가 포함된 긴 구간과 알아듣기 어려운 사람 정답은 CER에서 명시적으로 제외합니다.
-- 기본 정책은 fuzzy match를 사용하지 않습니다. `--recover`를 명시한 실험에서만 안내
-  문맥, 노선 후보, 음소거리와 차순위 margin을 모두 검사하며 전체 구간 평가는 남아 있습니다.
-- 원본 녹음과 전사 결과는 개인정보 보호를 위해 공개 저장소에 포함하지 않습니다.
+- 어린이대공원 구간에서는 목적지 인식과 하차 안내를 확인했습니다.
+- 공릉·중화 등 RTZR가 역명 token을 만들지 못한 구간도 있습니다.
+- domain과 score 비교는 한 구간의 결과이므로 전체 노선 최적값으로 일반화하지 않습니다.
+- 음성만 사용하므로 방송 사이의 실제 위치는 알 수 없습니다.
+- `.env`, 원본 음성, 전사, raw RTZR 결과와 비공개 보고서는 Git에 포함하지 않습니다.
 
 ## 참고한 공식 문서
 
 - [RTZR 인증](https://developers.rtzr.ai/docs/authentications/)
 - [RTZR Streaming STT](https://developers.rtzr.ai/docs/stt-streaming/)
 - [RTZR Streaming WebSocket](https://developers.rtzr.ai/docs/stt-streaming/websocket/)
-- [RTZR 일반 STT](https://developers.rtzr.ai/docs/stt-file/)

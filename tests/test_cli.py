@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+from pathlib import Path
 
 import pytest
 from rich.console import Console
@@ -8,8 +9,7 @@ from typer.testing import CliRunner
 
 import nextstop_stt.cli as cli_module
 from nextstop_stt.cli import app
-from nextstop_stt.rtzr.models import StreamingDomain, StreamingModel, StreamingTranscript
-from nextstop_stt.station_extraction import StationMatchReason
+from nextstop_stt.rtzr.models import StreamingTranscript
 
 runner = CliRunner()
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -19,12 +19,28 @@ def _unstyle(text: str) -> str:
     return _ANSI_ESCAPE.sub("", text)
 
 
-def test_help_describes_project() -> None:
+def test_help_exposes_only_user_facing_commands() -> None:
     result = runner.invoke(app, ["--help"], terminal_width=160)
     output = _unstyle(result.output)
 
     assert result.exit_code == 0
     assert "RTZR Streaming STT" in output
+    assert "journey-demo" in output
+    assert "check-auth" in output
+    assert "batch-file" not in output
+    assert "stream-file" not in output
+    assert "evaluate-run" not in output
+
+
+def test_demo_scripts_use_fixed_repository_audio() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    shell_script = (project_root / "scripts" / "run_demo.sh").read_text(encoding="utf-8")
+    powershell_script = (project_root / "scripts" / "run_demo.ps1").read_text(encoding="utf-8")
+
+    assert "subwayaudio.m4a" in shell_script
+    assert "subwayaudio.m4a" in powershell_script
+    assert "--source-file" not in shell_script
+    assert "--source-file" not in powershell_script
 
 
 def test_version_is_available() -> None:
@@ -73,134 +89,74 @@ def test_check_auth_never_prints_token(monkeypatch) -> None:
     assert private_token not in result.output
 
 
-def test_stream_file_help_makes_cost_and_privacy_controls_visible() -> None:
-    result = runner.invoke(app, ["stream-file", "--help"], terminal_width=220)
+def test_journey_demo_help_keeps_inputs_minimal() -> None:
+    result = runner.invoke(app, ["journey-demo", "--help"], terminal_width=180)
     output = _unstyle(result.output)
 
     assert result.exit_code == 0
-    assert "--duration-ms" in output
-    assert "--preprocess" in output
-    assert "--recover" in output
-    assert "required" in output.lower()
-    assert "--show-text" in output
-    assert "passenger" in output
-    assert "audio" in output
-    assert "--target-station" in output
-    assert "--keyword" in output
-    assert "--detect-station" in output
-    assert "--output-file" in output
-
-
-def test_journey_demo_help_exposes_user_inputs_and_safe_defaults() -> None:
-    result = runner.invoke(app, ["journey-demo", "--help"], terminal_width=220)
-    output = _unstyle(result.output)
-
-    assert result.exit_code == 0
-    assert "--source-file" in output
     assert "--destination" in output
-    assert "--start-seconds" in output
-    assert "--duration-seconds" in output
-    assert "--keyword-score" in output
-    assert "--destination-score" in output
-    assert "--recover" in output
     assert "--show-text" in output
-    assert "--hide-text" in output
-    assert "--output-file" in output
+    assert "--source-file" not in output
+    assert "--domain" not in output
+    assert "--keyword-score" not in output
+    assert "--preprocess" not in output
 
 
-def test_journey_demo_shows_prepare_and_arrival_flow(tmp_path, monkeypatch) -> None:
+def test_journey_demo_uses_fixed_settings_and_shows_arrival(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
-    source = tmp_path / "owned.m4a"
-    source.write_bytes(b"private audio placeholder")
-    (tmp_path / "results" / "private").mkdir(parents=True)
+    (tmp_path / "subwayaudio.m4a").write_bytes(b"private audio placeholder")
     captured = {}
 
-    async def fake_stream_file(**kwargs):
+    async def fake_run_journey_stream(**kwargs):
         captured.update(kwargs)
-        tracker = kwargs["journey_tracker"]
-        for number, station in enumerate(("중곡", "군자", "어린이대공원"), start=1):
-            row = cli_module._station_row(
-                number,
-                tracker.observe(station),
-                source_time_ms=number * 1_000,
-            )
-            cli_module.typer.echo(row)
-        return 0, 3, 0, 3, 0
+        update = kwargs["destination_tracker"].observe("어린이대공원")
+        cli_module.typer.echo(cli_module._station_row(1, update))
+        return 3, 1
 
-    monkeypatch.setattr(cli_module, "_stream_file", fake_stream_file)
+    monkeypatch.setattr(cli_module, "_run_journey_stream", fake_run_journey_stream)
     monkeypatch.setattr(cli_module, "probe_audio_duration_ms", lambda _: 60_000)
 
     result = runner.invoke(
         app,
-        [
-            "journey-demo",
-            "--source-file",
-            str(source),
-            "--destination",
-            "어린이대공원",
-            "--yes",
-        ],
+        ["journey-demo", "--destination", "어린이대공원", "--yes"],
     )
 
     assert result.exit_code == 0
     assert "곧 도착합니다" in result.output
-    assert "어린이대공원역" in result.output
     assert "이번 역에서 하차하세요" in result.output
     assert "00. 경로 기준 공릉역 출발" in result.output
-    assert "인식된 역 3개" in result.output
-    assert "공릉 → 태릉입구 → 먹골" in result.output
-    assert captured["duration_ms"] == 60_000
-    assert captured["preprocess"] is cli_module.AudioPreprocessPreset.NONE
-    assert captured["contextual_recovery"] is False
+    assert "인식된 역 1개" in result.output
     assert captured["show_text"] is False
-    assert "RTZR 전사문도 함께 표시합니다" not in result.output
-    keyword_scores = {boost.text: boost.score for boost in captured["keywords"]}
-    assert keyword_scores["어린이대공원"] == 2.0
-    assert keyword_scores["어린이 대공원"] == 2.0
-    assert keyword_scores["세종대"] == 2.0
-    assert keyword_scores["군자"] == 1.0
+    scores = {boost.text: boost.score for boost in captured["keywords"]}
+    assert scores["어린이대공원"] == 2.0
+    assert scores["어린이 대공원"] == 2.0
+    assert scores["세종대"] == 2.0
+    assert scores["군자"] == 1.0
 
 
-def test_journey_demo_rejects_destination_outside_recording_before_api(tmp_path) -> None:
-    source = tmp_path / "owned.m4a"
-    source.write_bytes(b"private audio placeholder")
+def test_journey_demo_rejects_destination_outside_recording(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "subwayaudio.m4a").write_bytes(b"private audio placeholder")
 
     result = runner.invoke(
         app,
-        [
-            "journey-demo",
-            "--source-file",
-            str(source),
-            "--destination",
-            "중계",
-            "--yes",
-        ],
+        ["journey-demo", "--destination", "중계", "--yes"],
     )
 
     assert result.exit_code == 1
     assert "공릉~어린이대공원" in result.output
-    assert "RTZR Streaming STT 연결" not in result.output
 
 
-def test_streaming_keyword_parser_uses_explicit_or_default_score() -> None:
-    boosts = cli_module._parse_keyword_boosts(("먹골역:2.5", "상봉역"))
+def test_journey_demo_requires_fixed_audio_at_repository_root(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
 
-    assert [(boost.text, boost.score) for boost in boosts] == [
-        ("먹골역", 2.5),
-        ("상봉역", 2.0),
-    ]
+    result = runner.invoke(
+        app,
+        ["journey-demo", "--destination", "군자", "--yes"],
+    )
 
-
-def test_line7_keyword_boosts_use_equal_score_without_overriding_explicit_word() -> None:
-    explicit = cli_module._parse_keyword_boosts(("먹골:0.5",))
-
-    boosts = cli_module._merge_line7_keyword_boosts(explicit, score=1.0)
-
-    by_text = {boost.text: boost.score for boost in boosts}
-    assert by_text["먹골"] == 0.5
-    assert by_text["어린이대공원"] == 1.0
-    assert by_text["세종대"] == 1.0
-    assert len(by_text) == len(boosts)
+    assert result.exit_code == 1
+    assert "subwayaudio.m4a" in result.output
 
 
 def test_replay_clock_formats_short_and_long_audio() -> None:
@@ -223,23 +179,12 @@ def test_journey_summary_keeps_station_list_compact() -> None:
     )
 
 
-def test_route_context_row_separates_known_route_from_stt_detection() -> None:
-    tracker = cli_module.JourneyTracker("태릉입구", initial_station="공릉")
-
-    row = cli_module._route_context_row(tracker.route_context())
-
-    assert row == "00. 경로 기준 공릉역 출발 | 목적지까지 1정거장"
-
-
-def test_replay_display_exposes_streaming_activity_without_transcript() -> None:
+def test_replay_display_exposes_activity_without_transcript() -> None:
     display = cli_module._ReplayDisplay(
         duration_ms=60_000,
-        start_ms=0,
         started_at=0.0,
         console=Console(force_terminal=False),
     )
-
-    display.update_activity(partial_count=7, final_count=3, candidate_count=1)
 
     status = display._status_text(12_000).plain
     assert "RTZR p/f" not in status
@@ -248,67 +193,23 @@ def test_replay_display_exposes_streaming_activity_without_transcript() -> None:
 
 
 def test_interrupted_stream_saves_received_responses(tmp_path, monkeypatch) -> None:
-    output = tmp_path / "interrupted.json"
-    source_file = tmp_path / "owned.m4a"
-    source_file.write_bytes(b"private audio placeholder")
-
-    class FakeCredentials:
-        @classmethod
-        def from_env(cls):
-            return cls()
-
-    class FakeProvider:
-        def __init__(self, _credentials) -> None:
-            pass
-
-        async def aclose(self) -> None:
-            return None
-
-    class FakeSource:
-        def __init__(self, *_args, **_kwargs) -> None:
-            pass
-
-        async def frames(self):
-            if False:
-                yield b""
-
-    class FakeClient:
-        def __init__(self, _provider, _config) -> None:
-            pass
-
-        async def transcribe(self, _frames):
-            yield StreamingTranscript.model_validate(
-                {
-                    "seq": 1,
-                    "start_at": 1_000,
-                    "duration": 500,
-                    "final": True,
-                    "alternatives": [{"text": "공릉", "confidence": 0.8}],
-                }
-            )
-            raise asyncio.CancelledError
-
-    monkeypatch.setattr(cli_module, "RTZRCredentials", FakeCredentials)
-    monkeypatch.setattr(cli_module, "RTZRTokenProvider", FakeProvider)
-    monkeypatch.setattr(cli_module, "FFmpegPCMSource", FakeSource)
-    monkeypatch.setattr(cli_module, "RTZRStreamingClient", FakeClient)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "subwayaudio.m4a").write_bytes(b"private audio placeholder")
+    output = tmp_path / "results" / "private" / "interrupted.json"
+    output.parent.mkdir(parents=True)
+    _install_stream_fakes(monkeypatch, ("공릉",), interrupt=True)
 
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(
-            cli_module._stream_file(
-                source_file=source_file,
+            cli_module._run_journey_stream(
                 duration_ms=60_000,
-                start_ms=0,
-                sample_rate=16_000,
-                domain=StreamingDomain.MEETING,
-                model=StreamingModel.SOMMERS_KO,
-                language=None,
-                target_station=None,
+                destination_tracker=cli_module.JourneyTracker(
+                    "어린이대공원",
+                    initial_station="공릉",
+                ),
                 keywords=(),
                 output_file=output,
                 show_text=False,
-                detect_stations=True,
-                journey_tracker=None,
             )
         )
 
@@ -316,16 +217,39 @@ def test_interrupted_stream_saves_received_responses(tmp_path, monkeypatch) -> N
     assert artifact["run"]["status"] == "interrupted"
     assert artifact["summary"]["final_count"] == 1
     assert len(artifact["responses"]) == 1
-    assert artifact["run"]["station_extraction"] == {
-        "contextual_recovery": False
-    }
 
 
-def test_stream_file_stops_after_destination_arrival(tmp_path, monkeypatch) -> None:
-    output = tmp_path / "arrived.json"
-    source_file = tmp_path / "owned.m4a"
-    source_file.write_bytes(b"private audio placeholder")
+def test_stream_stops_after_destination_arrival(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "subwayaudio.m4a").write_bytes(b"private audio placeholder")
+    output = tmp_path / "results" / "private" / "arrived.json"
+    output.parent.mkdir(parents=True)
+    fake_client = _install_stream_fakes(
+        monkeypatch,
+        ("이번 역은 어린이대공원역입니다", "이번 역은 군자역입니다"),
+    )
 
+    result = asyncio.run(
+        cli_module._run_journey_stream(
+            duration_ms=60_000,
+            destination_tracker=cli_module.JourneyTracker(
+                "어린이대공원",
+                initial_station="공릉",
+            ),
+            keywords=(),
+            output_file=output,
+            show_text=False,
+        )
+    )
+
+    assert result == (1, 1)
+    assert fake_client.emitted == 1
+    artifact = json.loads(output.read_text(encoding="utf-8"))
+    assert artifact["run"]["status"] == "completed"
+    assert artifact["journey"][0]["status"] == "arrived"
+
+
+def _install_stream_fakes(monkeypatch, texts: tuple[str, ...], *, interrupt: bool = False):
     class FakeCredentials:
         @classmethod
         def from_env(cls):
@@ -352,10 +276,7 @@ def test_stream_file_stops_after_destination_arrival(tmp_path, monkeypatch) -> N
             pass
 
         async def transcribe(self, _frames):
-            for seq, text in enumerate(
-                ("이번 역은 어린이대공원역입니다", "이번 역은 군자역입니다"),
-                start=1,
-            ):
+            for seq, text in enumerate(texts, start=1):
                 FakeClient.emitted += 1
                 yield StreamingTranscript.model_validate(
                     {
@@ -366,165 +287,28 @@ def test_stream_file_stops_after_destination_arrival(tmp_path, monkeypatch) -> N
                         "alternatives": [{"text": text, "confidence": 0.8}],
                     }
                 )
+            if interrupt:
+                raise asyncio.CancelledError
+
+    class FakeDisplay:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def start(self) -> None:
+            pass
+
+        async def stop(self) -> None:
+            pass
+
+        def add_transcript(self, *_args, **_kwargs) -> None:
+            pass
+
+        def add_station(self, *_args, **_kwargs) -> None:
+            pass
 
     monkeypatch.setattr(cli_module, "RTZRCredentials", FakeCredentials)
     monkeypatch.setattr(cli_module, "RTZRTokenProvider", FakeProvider)
     monkeypatch.setattr(cli_module, "FFmpegPCMSource", FakeSource)
     monkeypatch.setattr(cli_module, "RTZRStreamingClient", FakeClient)
-
-    result = asyncio.run(
-        cli_module._stream_file(
-            source_file=source_file,
-            duration_ms=60_000,
-            start_ms=0,
-            sample_rate=16_000,
-            domain=StreamingDomain.MEETING,
-            model=StreamingModel.SOMMERS_KO,
-            language=None,
-            target_station=None,
-            keywords=(),
-            output_file=output,
-            show_text=False,
-            detect_stations=True,
-            journey_tracker=cli_module.JourneyTracker("어린이대공원"),
-        )
-    )
-
-    assert result == (0, 1, 0, 1, 0)
-    assert FakeClient.emitted == 1
-    artifact = json.loads(output.read_text(encoding="utf-8"))
-    assert artifact["run"]["status"] == "completed"
-    assert artifact["journey"][0]["status"] == "arrived"
-
-
-def test_station_row_keeps_demo_copy_user_facing() -> None:
-    update = cli_module.JourneyTracker("어린이대공원").observe("먹골")
-    mention = cli_module.StationMention(
-        station="먹골",
-        reason=StationMatchReason.CONTEXTUAL_PHONETIC_RECOVERY,
-        observed_token="마콜",
-        phonetic_distance=0.333,
-    )
-
-    row = cli_module._station_row(
-        1,
-        update,
-        source_time_ms=265_000,
-        mention=mention,
-    )
-
-    assert row.startswith("01. 현재 먹골역입니다.")
-    assert "문맥 복원" not in row
-    assert "음소거리" not in row
-
-
-def test_batch_file_help_exposes_model_domain_and_private_output() -> None:
-    result = runner.invoke(app, ["batch-file", "--help"], terminal_width=160)
-    output = _unstyle(result.output)
-
-    assert result.exit_code == 0
-    assert "--model" in output
-    assert "--domain" in output
-    assert "results/private" in output
-
-
-def test_batch_output_must_stay_in_private_results(tmp_path) -> None:
-    outside = tmp_path / "public-result.json"
-
-    try:
-        cli_module._private_result_path(outside)
-    except ValueError as error:
-        assert "results/private" in str(error)
-    else:
-        raise AssertionError("public Batch output path was accepted")
-
-
-def test_prepare_review_help_exposes_fixed_chunks_and_private_output() -> None:
-    result = runner.invoke(app, ["prepare-review", "--help"], terminal_width=160)
-    output = _unstyle(result.output)
-
-    assert result.exit_code == 0
-    assert "model-independent" in output
-    assert "private_audio" in output
-    assert "--chunk-seconds" in output
-
-
-def test_review_output_must_stay_in_private_audio(tmp_path) -> None:
-    outside = tmp_path / "public-review"
-
-    try:
-        cli_module._private_audio_dir(outside)
-    except ValueError as error:
-        assert "private_audio" in str(error)
-    else:
-        raise AssertionError("public review output path was accepted")
-
-
-def test_evaluate_run_help_exposes_private_inputs_and_system_name() -> None:
-    result = runner.invoke(app, ["evaluate-run", "--help"], terminal_width=160)
-    output = _unstyle(result.output)
-
-    assert result.exit_code == 0
-    assert "--ground-truth-file" in output
-    assert "--predictions-file" in output
-    assert "--system-name" in output
-    assert "private" in output.lower()
-
-
-def test_evaluate_run_writes_only_private_aggregate(tmp_path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    private_audio = tmp_path / "private_audio"
-    private_results = tmp_path / "results" / "private"
-    private_audio.mkdir()
-    private_results.mkdir(parents=True)
-    ground_truth = private_audio / "ground-truth.csv"
-    predictions = private_results / "predictions.csv"
-    output = private_results / "metrics.json"
-    ground_truth.write_text(
-        "segment_id,start_ms,end_ms,station,announcement_type,reference_text,"
-        "expected_alert,overlapping_speech,noise_level,notes\n"
-        "segment-001,1000,2000,먹골,NEXT_STATION,먹골역,true,false,medium,\n",
-        encoding="utf-8",
-    )
-    predictions.write_text(
-        "segment_id,hypothesis_text,predicted_alert,status\n"
-        "segment-001,먹골역,true,completed\n",
-        encoding="utf-8",
-    )
-
-    result = runner.invoke(
-        app,
-        [
-            "evaluate-run",
-            "--ground-truth-file",
-            str(ground_truth),
-            "--predictions-file",
-            str(predictions),
-            "--output-file",
-            str(output),
-            "--system-name",
-            "test-system",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert "CER=0.0000" in result.output
-    assert "F1=1.0000" in result.output
-    artifact = output.read_text(encoding="utf-8")
-    assert "test-system" in artifact
-    assert "먹골역" not in artifact
-
-
-def test_prepare_batch_predictions_help_exposes_alignment_inputs() -> None:
-    result = runner.invoke(
-        app,
-        ["prepare-batch-predictions", "--help"],
-        terminal_width=160,
-    )
-    output = _unstyle(result.output)
-
-    assert result.exit_code == 0
-    assert "--ground-truth-file" in output
-    assert "--batch-result-file" in output
-    assert "--target-station" in output
-    assert "results/private" in output
+    monkeypatch.setattr(cli_module, "_ReplayDisplay", FakeDisplay)
+    return FakeClient
